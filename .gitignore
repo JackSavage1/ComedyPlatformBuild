@@ -1,0 +1,15 @@
+# Database — each machine creates its own via init_db() + seed_database()
+data/tracker.db
+
+# Python cache — auto-generated, machine-specific
+__pycache__/
+*.pyc
+
+# Streamlit cache
+.streamlit/
+
+# Environment variables (if you ever add API keys)
+.env
+
+# Claude Code project files
+.claude/
