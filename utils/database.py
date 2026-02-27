@@ -1,16 +1,18 @@
 """
-Database Module — All SQLite Operations
+Database Module — All PostgreSQL Operations (Supabase)
 
-SQLite is a lightweight database that stores everything in a single file (tracker.db).
-Unlike big databases (PostgreSQL, MySQL), SQLite needs no server — it's built into Python.
-Perfect for personal apps like this.
+This module connects to a Supabase-hosted PostgreSQL database so your data
+persists across sessions and works from any computer.
+
+Previously this used SQLite (a local file). Now it uses psycopg2 to talk to
+PostgreSQL over the internet. The connection URL is stored in Streamlit secrets
+(.streamlit/secrets.toml locally, or in the Streamlit Cloud dashboard).
 
 Key concepts:
-- A "connection" (conn) is like opening the database file
-- A "cursor" is what executes SQL commands on that connection
-- We use "CREATE TABLE IF NOT EXISTS" so this is safe to call every time the app starts
-- "?" placeholders in SQL prevent SQL injection (a security attack where someone
-  sneaks malicious commands into your database through input fields)
+- A "connection" (conn) opens a network connection to Supabase's PostgreSQL server
+- A "cursor" executes SQL commands on that connection
+- "%s" placeholders in SQL prevent SQL injection (same idea as SQLite's "?")
+- pd.read_sql_query() works identically with PostgreSQL — just pass the connection
 
 pandas DataFrames:
 - pandas is a library for working with tabular data (think: spreadsheets in Python)
@@ -18,33 +20,32 @@ pandas DataFrames:
 - DataFrames are what Streamlit uses to display tables, charts, etc.
 """
 
-import sqlite3
-import os
+import psycopg2
+import psycopg2.extras
 import pandas as pd
+import streamlit as st
 from datetime import datetime
-
-# ---------------------------------------------------------------------------
-# Path to our database file.
-# os.path.dirname(__file__) gets the folder THIS file lives in (utils/)
-# We go up one level (..) to the project root, then into data/
-# ---------------------------------------------------------------------------
-DB_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
-DB_PATH = os.path.join(DB_DIR, "tracker.db")
 
 
 def get_connection():
     """
-    Opens a connection to the SQLite database.
+    Opens a connection to the Supabase PostgreSQL database.
 
-    check_same_thread=False: SQLite normally only allows the thread that created
-    the connection to use it. Streamlit runs things across threads, so we disable
-    that check. This is safe for a single-user personal app.
+    The connection parameters are stored in Streamlit secrets (never in code).
+    Locally: .streamlit/secrets.toml
+    On Streamlit Cloud: configured in the app's Secrets settings.
+
+    We pass individual parameters instead of a single URL to avoid issues
+    with special characters (like brackets) in the password.
     """
-    # Make sure the data/ directory exists
-    os.makedirs(DB_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    # This makes rows behave like dictionaries (access columns by name)
-    conn.row_factory = sqlite3.Row
+    db = st.secrets["database"]
+    conn = psycopg2.connect(
+        host=db["host"],
+        port=db["port"],
+        dbname=db["dbname"],
+        user=db["user"],
+        password=db["password"],
+    )
     return conn
 
 
@@ -64,7 +65,7 @@ def init_db():
     # -----------------------------------------------------------------------
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS open_mics (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            id                SERIAL PRIMARY KEY,
             name              TEXT NOT NULL,
             venue             TEXT NOT NULL,
             address           TEXT,
@@ -86,8 +87,8 @@ def init_db():
             advance_days      INTEGER DEFAULT 0,
             mic_rating        REAL,
             notes             TEXT,
-            is_active         BOOLEAN DEFAULT 1,
-            is_biweekly       BOOLEAN DEFAULT 0,
+            is_active         BOOLEAN DEFAULT TRUE,
+            is_biweekly       BOOLEAN DEFAULT FALSE,
             created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -98,7 +99,7 @@ def init_db():
     # -----------------------------------------------------------------------
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS my_sets (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            id                SERIAL PRIMARY KEY,
             open_mic_id       INTEGER REFERENCES open_mics(id),
             date_performed    DATE NOT NULL,
             set_rating        INTEGER,
@@ -108,10 +109,10 @@ def init_db():
             recording_url     TEXT,
             recording_type    TEXT,
             notes             TEXT,
-            new_material      BOOLEAN DEFAULT 0,
-            got_feedback      BOOLEAN DEFAULT 0,
+            new_material      BOOLEAN DEFAULT FALSE,
+            got_feedback      BOOLEAN DEFAULT FALSE,
             feedback_notes    TEXT,
-            would_return      BOOLEAN DEFAULT 1,
+            would_return      BOOLEAN DEFAULT TRUE,
             tags              TEXT,
             created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -126,7 +127,7 @@ def init_db():
     # -----------------------------------------------------------------------
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS mic_plans (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            id              SERIAL PRIMARY KEY,
             open_mic_id     INTEGER NOT NULL REFERENCES open_mics(id),
             plan_date       DATE NOT NULL,
             status          TEXT NOT NULL CHECK(status IN ('going', 'cancelled')),
@@ -140,7 +141,7 @@ def init_db():
     # -----------------------------------------------------------------------
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS scrape_log (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            id                SERIAL PRIMARY KEY,
             source            TEXT NOT NULL,
             last_scraped      TIMESTAMP,
             status            TEXT,
@@ -161,11 +162,11 @@ def get_all_mics():
     Returns a pandas DataFrame of ALL active mics.
 
     We join nothing here — just the raw mic list.
-    is_active = 1 filters out mics you've "soft deleted" (deactivated).
+    is_active = TRUE filters out mics you've "soft deleted" (deactivated).
     """
     conn = get_connection()
     df = pd.read_sql_query(
-        "SELECT * FROM open_mics WHERE is_active = 1 ORDER BY day_of_week, start_time",
+        "SELECT * FROM open_mics WHERE is_active = TRUE ORDER BY day_of_week, start_time",
         conn
     )
     conn.close()
@@ -181,7 +182,7 @@ def get_mics_by_day(day):
     """
     conn = get_connection()
     df = pd.read_sql_query(
-        "SELECT * FROM open_mics WHERE is_active = 1 AND day_of_week = ? ORDER BY start_time",
+        "SELECT * FROM open_mics WHERE is_active = TRUE AND day_of_week = %s ORDER BY start_time",
         conn,
         params=(day,)
     )
@@ -216,7 +217,7 @@ def add_set(data_dict):
     cursor = conn.cursor()
 
     columns = ", ".join(data_dict.keys())
-    placeholders = ", ".join(["?"] * len(data_dict))
+    placeholders = ", ".join(["%s"] * len(data_dict))
     values = tuple(data_dict.values())
 
     cursor.execute(
@@ -260,7 +261,7 @@ def get_sets_for_mic(mic_id):
     """
     conn = get_connection()
     df = pd.read_sql_query(
-        "SELECT * FROM my_sets WHERE open_mic_id = ? ORDER BY date_performed DESC",
+        "SELECT * FROM my_sets WHERE open_mic_id = %s ORDER BY date_performed DESC",
         conn,
         params=(mic_id,)
     )
@@ -272,7 +273,7 @@ def get_set_count_for_mic(mic_id):
     """Returns how many times I've performed at a specific mic."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM my_sets WHERE open_mic_id = ?", (mic_id,))
+    cursor.execute("SELECT COUNT(*) FROM my_sets WHERE open_mic_id = %s", (mic_id,))
     count = cursor.fetchone()[0]
     conn.close()
     return count
@@ -286,7 +287,7 @@ def update_mic_rating(mic_id, rating):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE open_mics SET mic_rating = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE open_mics SET mic_rating = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
         (rating, mic_id)
     )
     conn.commit()
@@ -309,7 +310,7 @@ def seed_mics(mic_list):
 
     for mic in mic_list:
         columns = ", ".join(mic.keys())
-        placeholders = ", ".join(["?"] * len(mic))
+        placeholders = ", ".join(["%s"] * len(mic))
         values = tuple(mic.values())
 
         cursor.execute(
@@ -337,8 +338,8 @@ def is_db_empty():
 def get_mic_by_id(mic_id):
     """Returns a single mic's data as a dictionary."""
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM open_mics WHERE id = ?", (mic_id,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute("SELECT * FROM open_mics WHERE id = %s", (mic_id,))
     row = cursor.fetchone()
     conn.close()
     if row:
@@ -354,11 +355,11 @@ def update_mic(mic_id, data_dict):
     conn = get_connection()
     cursor = conn.cursor()
 
-    set_clause = ", ".join([f"{k} = ?" for k in data_dict.keys()])
+    set_clause = ", ".join([f"{k} = %s" for k in data_dict.keys()])
     values = tuple(data_dict.values()) + (mic_id,)
 
     cursor.execute(
-        f"UPDATE open_mics SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        f"UPDATE open_mics SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
         values
     )
     conn.commit()
@@ -366,11 +367,11 @@ def update_mic(mic_id, data_dict):
 
 
 def deactivate_mic(mic_id):
-    """Soft-deletes a mic by setting is_active = 0."""
+    """Soft-deletes a mic by setting is_active = FALSE."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE open_mics SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE open_mics SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
         (mic_id,)
     )
     conn.commit()
@@ -383,7 +384,7 @@ def add_mic(data_dict):
     cursor = conn.cursor()
 
     columns = ", ".join(data_dict.keys())
-    placeholders = ", ".join(["?"] * len(data_dict))
+    placeholders = ", ".join(["%s"] * len(data_dict))
     values = tuple(data_dict.values())
 
     cursor.execute(
@@ -410,7 +411,7 @@ def set_mic_plan(open_mic_id, plan_date, status):
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO mic_plans (open_mic_id, plan_date, status)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
         ON CONFLICT(open_mic_id, plan_date) DO UPDATE SET
             status = excluded.status,
             created_at = CURRENT_TIMESTAMP
@@ -424,7 +425,7 @@ def remove_mic_plan(open_mic_id, plan_date):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "DELETE FROM mic_plans WHERE open_mic_id = ? AND plan_date = ?",
+        "DELETE FROM mic_plans WHERE open_mic_id = %s AND plan_date = %s",
         (open_mic_id, plan_date)
     )
     conn.commit()
@@ -443,7 +444,7 @@ def get_plans_for_week(week_start, week_end):
         SELECT p.*, m.name AS mic_name, m.venue, m.day_of_week
         FROM mic_plans p
         JOIN open_mics m ON p.open_mic_id = m.id
-        WHERE p.plan_date BETWEEN ? AND ?
+        WHERE p.plan_date BETWEEN %s AND %s
         ORDER BY p.plan_date
     """, conn, params=(week_start, week_end))
     conn.close()
@@ -453,10 +454,10 @@ def get_plans_for_week(week_start, week_end):
 def get_going_mic_ids_for_week(week_start, week_end):
     """Returns a set of open_mic_ids marked 'going' within a date range."""
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cursor.execute("""
         SELECT DISTINCT open_mic_id FROM mic_plans
-        WHERE plan_date BETWEEN ? AND ? AND status = 'going'
+        WHERE plan_date BETWEEN %s AND %s AND status = 'going'
     """, (week_start, week_end))
     ids = {row["open_mic_id"] for row in cursor.fetchall()}
     conn.close()
@@ -471,7 +472,7 @@ def get_sets_for_mic_date(mic_id, date_str):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id FROM my_sets WHERE open_mic_id = ? AND date_performed = ?",
+        "SELECT id FROM my_sets WHERE open_mic_id = %s AND date_performed = %s",
         (mic_id, date_str)
     )
     row = cursor.fetchone()
@@ -483,14 +484,14 @@ def delete_mic_hard(mic_id):
     """
     Soft-deletes a mic AND cleans up its future plans.
 
-    We use soft delete (is_active = 0) instead of actually deleting the row
+    We use soft delete (is_active = FALSE) instead of actually deleting the row
     because my_sets entries reference open_mic_id — if we deleted the mic,
     your set history would lose the mic name/venue info.
     """
     deactivate_mic(mic_id)
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM mic_plans WHERE open_mic_id = ?", (mic_id,))
+    cursor.execute("DELETE FROM mic_plans WHERE open_mic_id = %s", (mic_id,))
     conn.commit()
     conn.close()
 
@@ -504,11 +505,35 @@ def update_set(set_id, data_dict):
     """
     conn = get_connection()
     cursor = conn.cursor()
-    set_clause = ", ".join([f"{k} = ?" for k in data_dict.keys()])
+    set_clause = ", ".join([f"{k} = %s" for k in data_dict.keys()])
     values = tuple(data_dict.values()) + (set_id,)
     cursor.execute(
-        f"UPDATE my_sets SET {set_clause} WHERE id = ?",
+        f"UPDATE my_sets SET {set_clause} WHERE id = %s",
         values
     )
     conn.commit()
     conn.close()
+
+
+# ===========================================================================
+# SCRAPE LOG — Helper functions for logging scraper runs
+# ===========================================================================
+
+def log_scrape(source, status, notes):
+    """Logs a scraper run to the scrape_log table."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO scrape_log (source, last_scraped, status, notes) VALUES (%s, %s, %s, %s)",
+        (source, datetime.now().isoformat(), status, notes)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_scrape_log():
+    """Returns the full scrape log as a DataFrame."""
+    conn = get_connection()
+    df = pd.read_sql_query("SELECT * FROM scrape_log ORDER BY last_scraped DESC", conn)
+    conn.close()
+    return df

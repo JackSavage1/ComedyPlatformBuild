@@ -14,12 +14,11 @@ import streamlit as st
 import pandas as pd
 import csv
 import io
-import os
 from datetime import datetime
 from utils.database import (
     get_all_mics, add_mic, update_mic, deactivate_mic,
-    get_all_sets, update_mic_rating, get_connection, DB_PATH,
-    delete_mic_hard
+    get_all_sets, update_mic_rating, delete_mic_hard,
+    log_scrape, get_scrape_log
 )
 from scrapers.badslava import scrape_badslava, compare_badslava_with_database
 from scrapers.firemics import scrape_firemics, compare_firemics_with_database
@@ -310,9 +309,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
     )
 
     # Check scrape log
-    conn = get_connection()
-    scrape_log_all = pd.read_sql_query("SELECT * FROM scrape_log ORDER BY last_scraped DESC", conn)
-    conn.close()
+    scrape_log_all = get_scrape_log()
 
     bs_log = scrape_log_all[scrape_log_all["source"] == "badslava"]
     if not bs_log.empty:
@@ -324,20 +321,13 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
             result = scrape_badslava()
 
         # Log the attempt
-        conn = get_connection()
-        cursor = conn.cursor()
         status = "success" if result["mics"] else "error"
         notes = (
             f"Found {result['nyc_count']} NYC mics out of "
             f"{result['all_count']} total NY state entries. "
             f"{len(result['errors'])} errors."
         )
-        cursor.execute(
-            "INSERT INTO scrape_log (source, last_scraped, status, notes) VALUES (?, ?, ?, ?)",
-            ("badslava", datetime.now().isoformat(), status, notes)
-        )
-        conn.commit()
-        conn.close()
+        log_scrape("badslava", status, notes)
 
         # Save results to session_state so they persist across reruns
         # (Without this, clicking "Add All" would rerun the page and lose the results)
@@ -450,20 +440,13 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
             fm_result = scrape_firemics()
 
         # Log the attempt
-        conn = get_connection()
-        cursor = conn.cursor()
         status = "success" if fm_result["mics"] else "error"
         notes = (
             f"Found {len(fm_result['mics'])} unique mics from "
             f"{fm_result['all_count']} total event instances. "
             f"{len(fm_result['errors'])} errors."
         )
-        cursor.execute(
-            "INSERT INTO scrape_log (source, last_scraped, status, notes) VALUES (?, ?, ?, ?)",
-            ("firemics", datetime.now().isoformat(), status, notes)
-        )
-        conn.commit()
-        conn.close()
+        log_scrape("firemics", status, notes)
 
         # Save results to session_state so they persist across reruns
         st.session_state["fm_result"] = fm_result
@@ -624,21 +607,11 @@ with tab_export:
 
     with export_col3:
         st.markdown("#### Full Database Backup")
-        if os.path.exists(DB_PATH):
-            with open(DB_PATH, "rb") as f:
-                db_bytes = f.read()
-            st.download_button(
-                label="📥 Download SQLite DB",
-                data=db_bytes,
-                file_name=f"tracker_backup_{datetime.now().strftime('%Y%m%d')}.db",
-                mime="application/octet-stream",
-                use_container_width=True,
-            )
-            # Show file size
-            size_mb = os.path.getsize(DB_PATH) / (1024 * 1024)
-            st.caption(f"Database size: {size_mb:.2f} MB")
-        else:
-            st.info("Database file not found.")
+        st.info(
+            "Your database is now hosted on Supabase. "
+            "You can back it up from the Supabase dashboard, "
+            "or use the CSV exports on the left."
+        )
 
 
 # ===========================================================================

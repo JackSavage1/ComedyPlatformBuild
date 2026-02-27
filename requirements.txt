@@ -3,4 +3,5 @@ pandas
 requests
 beautifulsoup4
 plotly
+psycopg2-binary
 schedule
