@@ -296,7 +296,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
         except Exception as e:
             st.error(f"Error reading CSV: {str(e)}")
 
-    # -------------------------------------------------------------------
+# -------------------------------------------------------------------
     # SECTION 2: BAD SLAVA SCRAPER (the one that works!)
     # -------------------------------------------------------------------
     st.markdown("---")
@@ -366,20 +366,37 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                         type="primary"
                     ):
                         added = 0
+                        errors = 0
                         for mic in comparison["new_mics"]:
+                            # 1. Build dictionary
                             insert_data = {k: v for k, v in mic.items()
                                            if k != "source" and v is not None}
                             
-                            # --- FIX: Convert integers to Booleans for Postgres ---
+                            # 2. REQUIRED FIELDS FALLBACK (Fixes NotNullViolation)
+                            if not insert_data.get('name'): insert_data['name'] = "Unnamed Mic"
+                            if not insert_data.get('venue'): insert_data['venue'] = "Unknown Venue"
+                            if not insert_data.get('day_of_week'): insert_data['day_of_week'] = "Monday"
+                            if not insert_data.get('start_time'): insert_data['start_time'] = "00:00"
+
+                            # 3. BOOLEAN FIX
                             if 'is_biweekly' in insert_data:
                                 insert_data['is_biweekly'] = bool(insert_data['is_biweekly'])
                             if 'is_active' in insert_data:
                                 insert_data['is_active'] = bool(insert_data['is_active'])
+                            
+                            try:
+                                add_mic(insert_data)
+                                added += 1
+                            except Exception as e:
+                                errors += 1
+                                continue
                                 
-                            add_mic(insert_data)
-                            added += 1
-                        st.success(f"Added {added} new mics to your database!")
-                        st.balloons()
+                        if added > 0:
+                            st.success(f"Added {added} new mics to your database!")
+                            st.balloons()
+                        if errors > 0:
+                            st.warning(f"Skipped {errors} mics due to database errors.")
+                            
                         del st.session_state["bs_result"]
                         del st.session_state["bs_comparison"]
                         st.rerun()
@@ -412,7 +429,13 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                                 insert_data = {k: v for k, v in mic.items()
                                                if k != "source" and v is not None}
                                 
-                                # --- FIX: Convert integers to Booleans for Postgres ---
+                                # FALLBACKS for individual add
+                                if not insert_data.get('name'): insert_data['name'] = "Unnamed Mic"
+                                if not insert_data.get('venue'): insert_data['venue'] = "Unknown Venue"
+                                if not insert_data.get('day_of_week'): insert_data['day_of_week'] = "Monday"
+                                if not insert_data.get('start_time'): insert_data['start_time'] = "00:00"
+
+                                # BOOLEAN FIX
                                 if 'is_biweekly' in insert_data:
                                     insert_data['is_biweekly'] = bool(insert_data['is_biweekly'])
                                 if 'is_active' in insert_data:
@@ -429,7 +452,6 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                     st.success("No new mics found — your database already has everything Bad Slava lists for NYC!")
         else:
             st.warning("No NYC mics found. This is unexpected — the site may have changed.")
-
     # -------------------------------------------------------------------
     # SECTION 3: FIREMICS SCRAPER
     # -------------------------------------------------------------------
