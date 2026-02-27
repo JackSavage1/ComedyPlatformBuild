@@ -452,7 +452,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                     st.success("No new mics found — your database already has everything Bad Slava lists for NYC!")
         else:
             st.warning("No NYC mics found. This is unexpected — the site may have changed.")
-    # -------------------------------------------------------------------
+# -------------------------------------------------------------------
     # SECTION 3: FIREMICS SCRAPER
     # -------------------------------------------------------------------
     st.markdown("---")
@@ -467,7 +467,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
     fm_log = scrape_log_all[scrape_log_all["source"] == "firemics"]
     if not fm_log.empty:
         last = fm_log.iloc[0]
-        # FIX 1: Convert Timestamp to str before slicing to prevent TypeError
+        # FIX: Timestamp slicing safety
         st.caption(f"Last scraped: {str(last['last_scraped'])[:16]} — {last['status']} — {last['notes']}")
 
     if st.button("🔍 Scrape FireMics for NYC Mics", use_container_width=True, type="primary"):
@@ -483,7 +483,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
         )
         log_scrape("firemics", status, notes)
 
-        # Save results to session_state so they persist across reruns
+        # Save results to session_state
         st.session_state["fm_result"] = fm_result
         if fm_result["mics"]:
             fm_comparison = compare_firemics_with_database(fm_result["mics"], get_all_mics())
@@ -519,20 +519,37 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                         type="primary"
                     ):
                         added = 0
+                        errors = 0
                         for mic in fm_comparison["new_mics"]:
+                            # 1. Build dictionary
                             insert_data = {k: v for k, v in mic.items()
                                            if k != "source" and v is not None}
                             
-                            # FIX 2: Convert to Booleans for Postgres
+                            # 2. REQUIRED FIELDS FALLBACK (Fixes NotNullViolation)
+                            if not insert_data.get('name'): insert_data['name'] = "Unnamed FireMic"
+                            if not insert_data.get('venue'): insert_data['venue'] = "Unknown Venue"
+                            if not insert_data.get('day_of_week'): insert_data['day_of_week'] = "Monday"
+                            if not insert_data.get('start_time'): insert_data['start_time'] = "00:00"
+
+                            # 3. BOOLEAN FIX
                             if 'is_biweekly' in insert_data:
                                 insert_data['is_biweekly'] = bool(insert_data['is_biweekly'])
                             if 'is_active' in insert_data:
                                 insert_data['is_active'] = bool(insert_data['is_active'])
 
-                            add_mic(insert_data)
-                            added += 1
-                        st.success(f"Added {added} new mics to your database!")
-                        st.balloons()
+                            try:
+                                add_mic(insert_data)
+                                added += 1
+                            except Exception:
+                                errors += 1
+                                continue
+                                
+                        if added > 0:
+                            st.success(f"Added {added} new mics to your database!")
+                            st.balloons()
+                        if errors > 0:
+                            st.warning(f"Skipped {errors} mics due to database errors.")
+                            
                         del st.session_state["fm_result"]
                         del st.session_state["fm_comparison"]
                         st.rerun()
@@ -567,7 +584,13 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                                 insert_data = {k: v for k, v in mic.items()
                                                if k != "source" and v is not None}
                                 
-                                # FIX 2: Convert to Booleans for Postgres
+                                # FALLBACKS
+                                if not insert_data.get('name'): insert_data['name'] = "Unnamed FireMic"
+                                if not insert_data.get('venue'): insert_data['venue'] = "Unknown Venue"
+                                if not insert_data.get('day_of_week'): insert_data['day_of_week'] = "Monday"
+                                if not insert_data.get('start_time'): insert_data['start_time'] = "00:00"
+
+                                # BOOLEAN FIX
                                 if 'is_biweekly' in insert_data:
                                     insert_data['is_biweekly'] = bool(insert_data['is_biweekly'])
                                 if 'is_active' in insert_data:
