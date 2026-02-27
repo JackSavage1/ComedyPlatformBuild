@@ -445,7 +445,8 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
     fm_log = scrape_log_all[scrape_log_all["source"] == "firemics"]
     if not fm_log.empty:
         last = fm_log.iloc[0]
-        st.caption(f"Last scraped: {last['last_scraped'][:16]} — {last['status']} — {last['notes']}")
+        # FIX 1: Convert Timestamp to str before slicing to prevent TypeError
+        st.caption(f"Last scraped: {str(last['last_scraped'])[:16]} — {last['status']} — {last['notes']}")
 
     if st.button("🔍 Scrape FireMics for NYC Mics", use_container_width=True, type="primary"):
         with st.spinner("Scraping firemics.com for NYC comedy open mics..."):
@@ -499,6 +500,13 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                         for mic in fm_comparison["new_mics"]:
                             insert_data = {k: v for k, v in mic.items()
                                            if k != "source" and v is not None}
+                            
+                            # FIX 2: Convert to Booleans for Postgres
+                            if 'is_biweekly' in insert_data:
+                                insert_data['is_biweekly'] = bool(insert_data['is_biweekly'])
+                            if 'is_active' in insert_data:
+                                insert_data['is_active'] = bool(insert_data['is_active'])
+
                             add_mic(insert_data)
                             added += 1
                         st.success(f"Added {added} new mics to your database!")
@@ -536,6 +544,13 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                             if st.button(f"➕ Add to my database", key=f"add_fm_{i}"):
                                 insert_data = {k: v for k, v in mic.items()
                                                if k != "source" and v is not None}
+                                
+                                # FIX 2: Convert to Booleans for Postgres
+                                if 'is_biweekly' in insert_data:
+                                    insert_data['is_biweekly'] = bool(insert_data['is_biweekly'])
+                                if 'is_active' in insert_data:
+                                    insert_data['is_active'] = bool(insert_data['is_active'])
+
                                 add_mic(insert_data)
                                 st.success(f"Added '{mic['name']}'!")
                                 fresh_comparison = compare_firemics_with_database(
@@ -547,7 +562,6 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                     st.success("No new mics found — your database already has everything FireMics lists for NYC!")
         else:
             st.warning("No NYC mics found. FireMics may have changed their data structure.")
-
     # -------------------------------------------------------------------
     # SECTION 4: MANUAL DISCOVERY LINKS
     # -------------------------------------------------------------------
