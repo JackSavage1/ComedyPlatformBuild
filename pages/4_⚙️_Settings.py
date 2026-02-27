@@ -314,6 +314,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
     bs_log = scrape_log_all[scrape_log_all["source"] == "badslava"]
     if not bs_log.empty:
         last = bs_log.iloc[0]
+        # Fixed Timestamp slicing by converting to str first
         st.caption(f"Last scraped: {str(last['last_scraped'])[:16]} — {last['status']} — {last['notes']}")
 
     if st.button("🔍 Scrape Bad Slava for NYC Mics", use_container_width=True, type="primary"):
@@ -329,8 +330,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
         )
         log_scrape("badslava", status, notes)
 
-        # Save results to session_state so they persist across reruns
-        # (Without this, clicking "Add All" would rerun the page and lose the results)
+        # Save results to session_state
         st.session_state["bs_result"] = result
         if result["mics"]:
             comparison = compare_badslava_with_database(result["mics"], get_all_mics())
@@ -338,7 +338,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
         else:
             st.session_state["bs_comparison"] = None
 
-    # Display results from session_state (persists across button clicks)
+    # Display results from session_state
     if "bs_result" in st.session_state:
         result = st.session_state["bs_result"]
 
@@ -369,11 +369,17 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                         for mic in comparison["new_mics"]:
                             insert_data = {k: v for k, v in mic.items()
                                            if k != "source" and v is not None}
+                            
+                            # --- FIX: Convert integers to Booleans for Postgres ---
+                            if 'is_biweekly' in insert_data:
+                                insert_data['is_biweekly'] = bool(insert_data['is_biweekly'])
+                            if 'is_active' in insert_data:
+                                insert_data['is_active'] = bool(insert_data['is_active'])
+                                
                             add_mic(insert_data)
                             added += 1
                         st.success(f"Added {added} new mics to your database!")
                         st.balloons()
-                        # Clear the scrape results so they don't show stale data
                         del st.session_state["bs_result"]
                         del st.session_state["bs_comparison"]
                         st.rerun()
@@ -405,9 +411,15 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                             if st.button(f"➕ Add to my database", key=f"add_bs_{i}"):
                                 insert_data = {k: v for k, v in mic.items()
                                                if k != "source" and v is not None}
+                                
+                                # --- FIX: Convert integers to Booleans for Postgres ---
+                                if 'is_biweekly' in insert_data:
+                                    insert_data['is_biweekly'] = bool(insert_data['is_biweekly'])
+                                if 'is_active' in insert_data:
+                                    insert_data['is_active'] = bool(insert_data['is_active'])
+
                                 add_mic(insert_data)
                                 st.success(f"Added '{mic['name']}'!")
-                                # Re-compare so the added mic disappears from the list
                                 fresh_comparison = compare_badslava_with_database(
                                     result["mics"], get_all_mics()
                                 )
