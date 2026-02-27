@@ -393,6 +393,8 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                                 
                         if added > 0:
                             st.success(f"Added {added} new mics to your database!")
+                            # CLEAR THE CACHE so other pages fetch fresh data
+                            st.cache_data.clear() 
                             st.balloons()
                         if errors > 0:
                             st.warning(f"Skipped {errors} mics due to database errors.")
