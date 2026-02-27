@@ -378,21 +378,19 @@ def deactivate_mic(mic_id):
     conn.close()
 
 
-def add_mic(data_dict):
-    """Inserts a single new mic into the database."""
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    columns = ", ".join(data_dict.keys())
-    placeholders = ", ".join(["%s"] * len(data_dict))
-    values = tuple(data_dict.values())
-
-    cursor.execute(
-        f"INSERT INTO open_mics ({columns}) VALUES ({placeholders})",
-        values
-    )
-    conn.commit()
-    conn.close()
+def add_mic(insert_data):
+    # ... your existing connection code ...
+    with conn.cursor() as cursor:
+        columns = ", ".join(insert_data.keys())
+        placeholders = ", ".join(["%s"] * len(insert_data))
+        values = tuple(insert_data.values())
+        
+        cursor.execute(
+            f"INSERT INTO open_mics ({columns}) VALUES ({placeholders})",
+            values
+        )
+        # CRITICAL: This is what actually saves the data to the disk!
+        conn.commit()
 
 
 # ===========================================================================
