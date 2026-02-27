@@ -314,7 +314,7 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
     bs_log = scrape_log_all[scrape_log_all["source"] == "badslava"]
     if not bs_log.empty:
         last = bs_log.iloc[0]
-        st.caption(f"Last scraped: {last['last_scraped'][:16]} — {last['status']} — {last['notes']}")
+        st.caption(f"Last scraped: {str(last['last_scraped'])[:16]} — {last['status']} — {last['notes']}")
 
     if st.button("🔍 Scrape Bad Slava for NYC Mics", use_container_width=True, type="primary"):
         with st.spinner("Scraping badslava.com for NYC comedy open mics..."):
