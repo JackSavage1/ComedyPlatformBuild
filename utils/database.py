@@ -378,21 +378,23 @@ def deactivate_mic(mic_id):
     conn.close()
 
 
-def add_mic(insert_data):
+def add_mic(data_dict):
+    """
+    Inserts a new open mic into the database.
+    Automatically removes 'id' if present to allow Postgres to auto-generate it.
+    """
     conn = get_connection()
-    try:
+    with conn:
         with conn.cursor() as cursor:
-            columns = ", ".join(insert_data.keys())
-            placeholders = ", ".join(["%s"] * len(insert_data))
-            values = tuple(insert_data.values())
-            cursor.execute(
-                f"INSERT INTO open_mics ({columns}) VALUES ({placeholders})",
-                values
-            )
-            # CRITICAL: This is what actually saves the data to the disk!
-            conn.commit()
-    finally:
-        conn.close()
+            # Remove 'id' (Postgres auto-generates it) and 'source' (not a table column)
+            clean_data = {k: v for k, v in data_dict.items() if k not in ['id', 'source']}
+
+            columns = ", ".join(clean_data.keys())
+            placeholders = ", ".join(["%s"] * len(clean_data))
+            values = tuple(clean_data.values())
+
+            query = f"INSERT INTO open_mics ({columns}) VALUES ({placeholders})"
+            cursor.execute(query, values)
 
 
 # ===========================================================================
