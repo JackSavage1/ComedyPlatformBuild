@@ -92,8 +92,16 @@ else:
             with col1:
                 st.write(f"📍 **{mic['address']}**, {mic['neighborhood']}, {mic['borough']}")
                 st.write(f"💰 {cost_display}")
-                if mic["set_length_min"]:
-                    st.write(f"⏱️ {int(mic['set_length_min'])} min sets")
+                set_length = mic.get("set_length_min")
+                # Handle None, empty, or NaN values robustly
+                import math
+                if set_length not in (None, "") and not (isinstance(set_length, float) and math.isnan(set_length)):
+                    try:
+                        st.write(f"⏱️ {int(float(set_length))} min sets")
+                    except (ValueError, TypeError):
+                        st.write("⏱️ Set length: N/A")
+                else:
+                    st.write("⏱️ Set length: N/A")
                 if mic["signup_method"]:
                     st.write(f"📝 Signup: {mic['signup_method']}")
                 if mic["signup_notes"]:
