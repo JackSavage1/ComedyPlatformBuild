@@ -226,6 +226,8 @@ with tab_mics:
                     "instagram": new_instagram if new_instagram else None,
                     "urgency": new_urgency,
                 }
+                if 'id' in mic_data:
+                    del mic_data['id']
                 add_mic(mic_data)
                 st.success(f"✅ Added '{new_name}' on {new_day}!")
                 st.rerun()
@@ -385,6 +387,8 @@ Another Mic,Bar Name,Friday,21:00,9:00 PM,Free,Brooklyn,Brooklyn,online
                                 insert_data['is_active'] = bool(insert_data['is_active'])
                             
                             try:
+                                if 'id' in insert_data:
+                                    del insert_data['id']
                                 add_mic(insert_data)
                                 added += 1
                             except Exception as e:
