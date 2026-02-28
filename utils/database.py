@@ -384,7 +384,7 @@ def add_mic(data_dict):
     Automatically removes 'id' if present to allow Postgres to auto-generate it.
     """
     conn = get_connection()
-    with conn:
+    try:
         with conn.cursor() as cursor:
             # Remove 'id' (Postgres auto-generates it) and 'source' (not a table column)
             clean_data = {k: v for k, v in data_dict.items() if k not in ['id', 'source']}
@@ -395,6 +395,9 @@ def add_mic(data_dict):
 
             query = f"INSERT INTO open_mics ({columns}) VALUES ({placeholders})"
             cursor.execute(query, values)
+            conn.commit()
+    finally:
+        conn.close()
 
 
 # ===========================================================================

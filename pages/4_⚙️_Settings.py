@@ -238,15 +238,20 @@ with tab_import:
                 except Exception as e:
                     errors.append(f"{mic['name']}: {e}")
 
-            st.success(f"Added {added} mics!")
             if errors:
+                st.error(f"Failed to add {len(errors)} mics:")
                 for err in errors:
                     st.error(err)
 
-            log_scrape("badslava", "success", f"Added {added} new mics")
-            st.session_state.pop("badslava_new_mics", None)
-            st.cache_data.clear()
-            st.rerun()
+            if added > 0:
+                st.success(f"Added {added} mics!")
+                log_scrape("badslava", "success", f"Added {added} new mics")
+                st.session_state.pop("badslava_new_mics", None)
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("No mics were added — check the errors above.")
+                log_scrape("badslava", "error", f"0 added, {len(errors)} errors: {errors[0] if errors else 'unknown'}")
 
     st.markdown("---")
 
@@ -314,15 +319,20 @@ with tab_import:
                 except Exception as e:
                     errors.append(f"{mic['name']}: {e}")
 
-            st.success(f"Added {added} mics!")
             if errors:
+                st.error(f"Failed to add {len(errors)} mics:")
                 for err in errors:
                     st.error(err)
 
-            log_scrape("firemics", "success", f"Added {added} new mics")
-            st.session_state.pop("firemics_new_mics", None)
-            st.cache_data.clear()
-            st.rerun()
+            if added > 0:
+                st.success(f"Added {added} mics!")
+                log_scrape("firemics", "success", f"Added {added} new mics")
+                st.session_state.pop("firemics_new_mics", None)
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("No mics were added — check the errors above.")
+                log_scrape("firemics", "error", f"0 added, {len(errors)} errors: {errors[0] if errors else 'unknown'}")
 
 
 # ===========================================================================
