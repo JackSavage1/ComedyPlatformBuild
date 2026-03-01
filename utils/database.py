@@ -402,7 +402,7 @@ def update_mic_rating(mic_id, rating):
     conn.close()
 
 
-def seed_mics(mic_list):
+def seed_mics(mic_list, auto_geocode=False):
     """
     Bulk inserts mics from a list of dictionaries.
 
@@ -412,14 +412,26 @@ def seed_mics(mic_list):
     Args:
         mic_list: A list of dicts, e.g.:
             [{"name": "Try New Sh*t", "venue": "EastVille", ...}, ...]
+        auto_geocode: If True, geocode addresses (slow due to rate limits)
     """
     conn = get_connection()
     cursor = conn.cursor()
 
     for mic in mic_list:
-        columns = ", ".join(mic.keys())
-        placeholders = ", ".join(["%s"] * len(mic))
-        values = tuple(mic.values())
+        clean_data = dict(mic)
+
+        # Auto-geocode if enabled and address exists without coordinates
+        if auto_geocode and clean_data.get('address') and not clean_data.get('latitude'):
+            borough = clean_data.get('borough', 'New York')
+            lat, lon = geocode_address(clean_data['address'], borough)
+            if lat and lon:
+                clean_data['latitude'] = lat
+                clean_data['longitude'] = lon
+            time.sleep(1)  # Respect Nominatim rate limit
+
+        columns = ", ".join(clean_data.keys())
+        placeholders = ", ".join(["%s"] * len(clean_data))
+        values = tuple(clean_data.values())
 
         cursor.execute(
             f"INSERT INTO open_mics ({columns}) VALUES ({placeholders})",
@@ -486,17 +498,26 @@ def deactivate_mic(mic_id):
     conn.close()
 
 
-def add_mic(data_dict):
+def add_mic(data_dict, auto_geocode=True):
     """
     Inserts a new open mic into the database.
     Automatically removes 'id' if present to allow Postgres to auto-generate it.
+    If auto_geocode is True and address is provided, attempts to geocode the address.
     """
+    # Remove 'id' (Postgres auto-generates it) and 'source' (not a table column)
+    clean_data = {k: v for k, v in data_dict.items() if k not in ['id', 'source']}
+
+    # Auto-geocode if address is provided and no coordinates exist
+    if auto_geocode and clean_data.get('address') and not clean_data.get('latitude'):
+        borough = clean_data.get('borough', 'New York')
+        lat, lon = geocode_address(clean_data['address'], borough)
+        if lat and lon:
+            clean_data['latitude'] = lat
+            clean_data['longitude'] = lon
+
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            # Remove 'id' (Postgres auto-generates it) and 'source' (not a table column)
-            clean_data = {k: v for k, v in data_dict.items() if k not in ['id', 'source']}
-
             columns = ", ".join(clean_data.keys())
             placeholders = ", ".join(["%s"] * len(clean_data))
             values = tuple(clean_data.values())

@@ -1,8 +1,9 @@
 """
 Map Page — Visualize all open mics on an interactive map
 
-Uses pydeck (Mapbox-based) to display all comedy open mics in NYC.
+Uses pydeck to display all comedy open mics in NYC on an interactive map.
 Each mic appears as a colored dot you can hover over for details.
+The map shows NYC streets, neighborhoods, and landmarks for context.
 """
 
 import streamlit as st
@@ -23,9 +24,25 @@ st.caption("All NYC comedy open mics plotted on a map")
 # Ensure database has coordinate columns
 migrate_add_coordinates()
 
+# Free map tile providers (no API key needed)
+MAP_STYLES = {
+    "Streets (Light)": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+    "Streets (Dark)": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+    "Voyager (Colored)": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+}
+
 # Sidebar controls
 with st.sidebar:
     st.header("Map Controls")
+
+    # Map style selector
+    map_style_name = st.selectbox(
+        "Map Style",
+        options=list(MAP_STYLES.keys()),
+        index=2  # Default to Voyager (nice colored style)
+    )
+
+    st.divider()
 
     # Day filter
     day_filter = st.multiselect(
@@ -39,6 +56,17 @@ with st.sidebar:
         "Filter by Borough",
         ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"],
         default=[]
+    )
+
+    st.divider()
+
+    # Zoom presets
+    st.subheader("Quick Zoom")
+    zoom_preset = st.radio(
+        "View",
+        options=["All NYC", "Manhattan", "Brooklyn", "Queens/Bronx"],
+        index=0,
+        horizontal=True
     )
 
     st.divider()
@@ -111,33 +139,61 @@ with col2:
 with col3:
     st.metric("Boroughs", df['borough'].nunique())
 
-# Create the map layer
+# Create the map layer - scatter plot with larger, more visible dots
 layer = pdk.Layer(
     "ScatterplotLayer",
     data=df,
     get_position=["longitude", "latitude"],
     get_color="color",
-    get_radius=150,
+    get_radius=120,
+    radius_min_pixels=8,
+    radius_max_pixels=25,
     pickable=True,
     auto_highlight=True,
+    highlight_color=[255, 255, 0, 200],
 )
 
-# Set initial view to NYC center
+# Zoom presets for different views
+ZOOM_PRESETS = {
+    "All NYC": {"lat": 40.7128, "lon": -73.9500, "zoom": 10.5},
+    "Manhattan": {"lat": 40.7580, "lon": -73.9855, "zoom": 12.5},
+    "Brooklyn": {"lat": 40.6782, "lon": -73.9442, "zoom": 12},
+    "Queens/Bronx": {"lat": 40.8000, "lon": -73.8800, "zoom": 11},
+}
+
+# Get zoom settings based on selection
+zoom_settings = ZOOM_PRESETS[zoom_preset]
+
+# Set initial view based on zoom preset
 view_state = pdk.ViewState(
-    latitude=40.7580,
-    longitude=-73.9855,
-    zoom=11,
+    latitude=zoom_settings["lat"],
+    longitude=zoom_settings["lon"],
+    zoom=zoom_settings["zoom"],
     pitch=0,
+    bearing=0,
 )
 
-# Render the map
+# Get selected map style
+selected_style = MAP_STYLES[map_style_name]
+
+# Render the map with street-level detail
 st.pydeck_chart(
     pdk.Deck(
         layers=[layer],
         initial_view_state=view_state,
-        tooltip={"html": "{tooltip}", "style": {"backgroundColor": "#1e1e1e", "color": "white"}},
-        map_style="mapbox://styles/mapbox/dark-v10",
-    )
+        tooltip={
+            "html": "{tooltip}",
+            "style": {
+                "backgroundColor": "#1a1a2e",
+                "color": "white",
+                "fontSize": "14px",
+                "padding": "10px",
+                "borderRadius": "8px",
+            }
+        },
+        map_style=selected_style,
+    ),
+    use_container_width=True,
 )
 
 # Legend
