@@ -25,6 +25,9 @@ import psycopg2.extras
 import pandas as pd
 import streamlit as st
 from datetime import datetime
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut
+import time
 
 
 def get_connection():
@@ -87,6 +90,8 @@ def init_db():
             advance_days      INTEGER DEFAULT 0,
             mic_rating        REAL,
             notes             TEXT,
+            latitude          REAL,
+            longitude         REAL,
             is_active         BOOLEAN DEFAULT TRUE,
             is_biweekly       BOOLEAN DEFAULT FALSE,
             created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -151,6 +156,109 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def migrate_add_coordinates():
+    """
+    Adds latitude and longitude columns to open_mics table if they don't exist.
+    Safe to call multiple times - only adds columns if missing.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Check if columns exist
+    cursor.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'open_mics' AND column_name IN ('latitude', 'longitude')
+    """)
+    existing = {row[0] for row in cursor.fetchall()}
+
+    if 'latitude' not in existing:
+        cursor.execute("ALTER TABLE open_mics ADD COLUMN latitude REAL")
+    if 'longitude' not in existing:
+        cursor.execute("ALTER TABLE open_mics ADD COLUMN longitude REAL")
+
+    conn.commit()
+    conn.close()
+
+
+# ===========================================================================
+# GEOCODING — Convert addresses to lat/lon coordinates
+# ===========================================================================
+
+def geocode_address(address, borough="New York"):
+    """
+    Converts a street address to latitude/longitude coordinates.
+
+    Uses OpenStreetMap's Nominatim geocoder (free, no API key needed).
+    Appends ", New York, NY" to improve accuracy for NYC addresses.
+
+    Returns:
+        tuple: (latitude, longitude) or (None, None) if geocoding fails
+    """
+    if not address:
+        return None, None
+
+    geolocator = Nominatim(user_agent="comedy_mic_tracker")
+    full_address = f"{address}, {borough}, New York, NY"
+
+    try:
+        location = geolocator.geocode(full_address, timeout=10)
+        if location:
+            return location.latitude, location.longitude
+    except GeocoderTimedOut:
+        pass
+    except Exception:
+        pass
+
+    return None, None
+
+
+def geocode_all_mics():
+    """
+    Geocodes all mics that don't have coordinates yet.
+
+    Adds a small delay between requests to respect Nominatim's rate limits.
+    Returns the count of mics successfully geocoded.
+    """
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    # Find mics without coordinates
+    cursor.execute("""
+        SELECT id, address, borough FROM open_mics
+        WHERE is_active = TRUE AND (latitude IS NULL OR longitude IS NULL) AND address IS NOT NULL
+    """)
+    mics_to_geocode = cursor.fetchall()
+
+    geocoded_count = 0
+    for mic in mics_to_geocode:
+        lat, lon = geocode_address(mic['address'], mic.get('borough', 'New York'))
+        if lat and lon:
+            cursor.execute(
+                "UPDATE open_mics SET latitude = %s, longitude = %s WHERE id = %s",
+                (lat, lon, mic['id'])
+            )
+            geocoded_count += 1
+        time.sleep(1)  # Respect Nominatim rate limit (1 request/second)
+
+    conn.commit()
+    conn.close()
+    return geocoded_count
+
+
+def get_mics_with_coordinates():
+    """
+    Returns all active mics that have valid coordinates for mapping.
+    """
+    conn = get_connection()
+    df = pd.read_sql_query("""
+        SELECT * FROM open_mics
+        WHERE is_active = TRUE AND latitude IS NOT NULL AND longitude IS NOT NULL
+        ORDER BY day_of_week, start_time
+    """, conn)
+    conn.close()
+    return df
 
 
 # ===========================================================================
