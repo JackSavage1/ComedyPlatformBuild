@@ -34,18 +34,66 @@ st.title("📅 Weekly Calendar")
 st.caption("All NYC open mics at a glance — click any mic to see full details")
 
 # ---------------------------------------------------------------------------
-# CALCULATE DATES FOR THIS WEEK
+# WEEK NAVIGATION
 #
-# The calendar shows recurring mics by day of week, but we need actual dates
-# so we can track "going to THIS Thursday's mic" vs next Thursday's.
+# Allow users to navigate between weeks (like Google Calendar).
+# Useful for mics that require booking several days/weeks in advance.
 # ---------------------------------------------------------------------------
 days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 today = datetime.now()
 today_name = today.strftime("%A")
 today_index = days.index(today_name)
 
-# Calculate the actual date for each day column this week
-monday_of_week = today - timedelta(days=today_index)
+# Initialize week offset in session state (0 = this week, 1 = next week, etc.)
+if "week_offset" not in st.session_state:
+    st.session_state.week_offset = 0
+
+# Week navigation controls
+nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns([1, 1, 2, 1, 1])
+
+with nav_col1:
+    if st.button("◀ Prev", use_container_width=True, disabled=st.session_state.week_offset <= -1):
+        st.session_state.week_offset -= 1
+        st.rerun()
+
+with nav_col2:
+    if st.button("Today", use_container_width=True, disabled=st.session_state.week_offset == 0):
+        st.session_state.week_offset = 0
+        st.rerun()
+
+with nav_col4:
+    if st.button("Next ▶", use_container_width=True, disabled=st.session_state.week_offset >= 3):
+        st.session_state.week_offset += 1
+        st.rerun()
+
+with nav_col5:
+    if st.button("+2 Wks ▶▶", use_container_width=True, disabled=st.session_state.week_offset >= 2):
+        st.session_state.week_offset += 2
+        st.rerun()
+
+# Calculate the Monday of the selected week
+monday_of_this_week = today - timedelta(days=today_index)
+monday_of_week = monday_of_this_week + timedelta(weeks=st.session_state.week_offset)
+
+# Week label
+week_start_display = monday_of_week.strftime("%b %d")
+week_end_display = (monday_of_week + timedelta(days=6)).strftime("%b %d, %Y")
+
+with nav_col3:
+    if st.session_state.week_offset == 0:
+        st.markdown(f"<h3 style='text-align:center; margin:0;'>This Week</h3>", unsafe_allow_html=True)
+    elif st.session_state.week_offset == 1:
+        st.markdown(f"<h3 style='text-align:center; margin:0;'>Next Week</h3>", unsafe_allow_html=True)
+    elif st.session_state.week_offset > 1:
+        st.markdown(f"<h3 style='text-align:center; margin:0;'>{st.session_state.week_offset} Weeks Out</h3>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"<h3 style='text-align:center; margin:0;'>Last Week</h3>", unsafe_allow_html=True)
+
+st.caption(f"📆 {week_start_display} – {week_end_display}")
+
+# ---------------------------------------------------------------------------
+# CALCULATE DATES FOR SELECTED WEEK
+# ---------------------------------------------------------------------------
 week_dates = {}  # {"Monday": date(2026, 2, 23), ...}
 for i, day in enumerate(days):
     week_dates[day] = (monday_of_week + timedelta(days=i)).date()
@@ -162,12 +210,23 @@ for i, day in enumerate(days):
         day_date = week_dates[day]
         date_label = day_date.strftime("%m/%d")
 
-        # Highlight today's column
-        if day == today_name:
+        # Only highlight today if we're viewing the current week
+        is_today = (day == today_name and st.session_state.week_offset == 0)
+
+        # Check if this day is in the past
+        is_past = day_date < today.date()
+
+        if is_today:
             st.markdown(
                 f"<h4 style='text-align:center; color:#FF4B4B; "
                 f"border-bottom: 3px solid #FF4B4B; padding-bottom: 5px;'>"
                 f"✨ {day[:3]} {date_label}</h4>",
+                unsafe_allow_html=True
+            )
+        elif is_past:
+            st.markdown(
+                f"<h4 style='text-align:center; color:#666; border-bottom: 1px solid #333; "
+                f"padding-bottom: 5px;'>{day[:3]} {date_label}</h4>",
                 unsafe_allow_html=True
             )
         else:
@@ -215,18 +274,23 @@ for i, day in enumerate(days):
             else:
                 status_prefix = ""
 
-            # Build signup deadline info
+            # Build signup deadline info based on the actual mic date
             signup_deadline = ""
             if mic["advance_days"] and int(mic["advance_days"]) > 0:
-                target_day_index = days.index(day)
-                current_day_index = days.index(today_name)
-                days_ahead = (target_day_index - current_day_index) % 7
-                if days_ahead == 0:
-                    days_ahead = 7
-                next_date = today + timedelta(days=days_ahead)
-                signup_by = next_date - timedelta(days=int(mic["advance_days"]))
-                if signup_by >= today:
-                    signup_deadline = f"📅 Sign up by {signup_by.strftime('%a %m/%d')}"
+                mic_date = datetime.combine(day_date, datetime.min.time())
+                signup_by = mic_date - timedelta(days=int(mic["advance_days"]))
+
+                # Calculate days until signup deadline
+                days_until_signup = (signup_by.date() - today.date()).days
+
+                if signup_by.date() < today.date():
+                    signup_deadline = "⚠️ Signup deadline passed!"
+                elif days_until_signup == 0:
+                    signup_deadline = "🔴 Sign up TODAY!"
+                elif days_until_signup == 1:
+                    signup_deadline = "🟡 Sign up by TOMORROW!"
+                else:
+                    signup_deadline = f"📅 Sign up by {signup_by.strftime('%a %m/%d')} ({days_until_signup} days)"
 
             # Compact card using an expander
             with st.expander(
