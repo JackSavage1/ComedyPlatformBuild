@@ -90,6 +90,14 @@ with st.sidebar:
                 st.success(f"Geocoded {count} mics!")
                 st.rerun()
 
+        # Show which mics are missing coordinates
+        with st.expander("Show mics without coordinates"):
+            geocoded_ids = set(mics_with_coords['id'].tolist()) if not mics_with_coords.empty else set()
+            missing_mics = all_mics[~all_mics['id'].isin(geocoded_ids)]
+            for _, mic in missing_mics.iterrows():
+                st.text(f"• {mic['name']} @ {mic['venue']}")
+                st.caption(f"  Address: {mic.get('address', 'No address')}")
+
 # Get mics with coordinates
 df = get_mics_with_coordinates()
 

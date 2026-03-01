@@ -191,7 +191,7 @@ def geocode_address(address, borough="New York"):
     Converts a street address to latitude/longitude coordinates.
 
     Uses OpenStreetMap's Nominatim geocoder (free, no API key needed).
-    Appends ", New York, NY" to improve accuracy for NYC addresses.
+    Tries multiple address formats to improve geocoding success rate.
 
     Returns:
         tuple: (latitude, longitude) or (None, None) if geocoding fails
@@ -200,16 +200,31 @@ def geocode_address(address, borough="New York"):
         return None, None
 
     geolocator = Nominatim(user_agent="comedy_mic_tracker")
-    full_address = f"{address}, {borough}, New York, NY"
 
-    try:
-        location = geolocator.geocode(full_address, timeout=10)
-        if location:
-            return location.latitude, location.longitude
-    except GeocoderTimedOut:
-        pass
-    except Exception:
-        pass
+    # Clean up address - remove apartment/suite letters (e.g., "750A" -> "750")
+    import re
+    clean_address = re.sub(r'(\d+)[A-Za-z]\b', r'\1', address)
+
+    # Try multiple address formats for better geocoding success
+    address_attempts = [
+        f"{clean_address}, {borough}, New York, NY",
+        f"{clean_address}, {borough}, NY",
+        f"{address}, New York, NY",
+        f"{clean_address}, New York City, NY",
+    ]
+
+    for full_address in address_attempts:
+        try:
+            location = geolocator.geocode(full_address, timeout=10)
+            if location:
+                # Verify it's actually in NYC area (roughly)
+                lat, lon = location.latitude, location.longitude
+                if 40.4 < lat < 41.0 and -74.3 < lon < -73.5:
+                    return lat, lon
+        except GeocoderTimedOut:
+            continue
+        except Exception:
+            continue
 
     return None, None
 
