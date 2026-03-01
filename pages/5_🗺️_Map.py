@@ -13,7 +13,8 @@ from utils.database import (
     get_mics_with_coordinates,
     geocode_all_mics,
     migrate_add_coordinates,
-    get_all_mics
+    get_all_mics,
+    fix_known_venue_coordinates
 )
 
 st.set_page_config(page_title="Mic Map", page_icon="🗺️", layout="wide")
@@ -84,8 +85,21 @@ with st.sidebar:
 
     if missing_coords > 0:
         st.warning(f"{missing_coords} mics need geocoding")
-        if st.button("🌍 Geocode Missing Mics"):
-            with st.spinner(f"Geocoding {missing_coords} addresses... (this may take a minute)"):
+
+        # First try to fix known venues that fail automatic geocoding
+        if st.button("🔧 Fix Known Venues"):
+            count, results = fix_known_venue_coordinates()
+            if count > 0:
+                st.success(f"Fixed {count} mics with known coordinates!")
+                for r in results:
+                    st.caption(f"  ✓ {r}")
+                st.rerun()
+            else:
+                st.info("No known venue fixes needed.")
+
+        # Then try automatic geocoding for the rest
+        if st.button("🌍 Geocode Remaining"):
+            with st.spinner(f"Geocoding addresses... (this may take a minute)"):
                 count = geocode_all_mics()
                 st.success(f"Geocoded {count} mics!")
                 st.rerun()

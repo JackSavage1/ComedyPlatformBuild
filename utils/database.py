@@ -276,6 +276,70 @@ def get_mics_with_coordinates():
     return df
 
 
+def set_coordinates_by_address(address, latitude, longitude):
+    """
+    Manually sets coordinates for all mics with a given address.
+    Used to fix venues that failed automatic geocoding.
+
+    Args:
+        address: The address to match (partial match supported)
+        latitude: The latitude coordinate
+        longitude: The longitude coordinate
+
+    Returns:
+        Number of mics updated
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """UPDATE open_mics
+           SET latitude = %s, longitude = %s
+           WHERE address LIKE %s AND (latitude IS NULL OR longitude IS NULL)""",
+        (latitude, longitude, f"%{address}%")
+    )
+    updated = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def fix_known_venue_coordinates():
+    """
+    Fixes coordinates for known NYC comedy venues that fail automatic geocoding.
+    These coordinates were manually looked up from Google Maps and other sources.
+    """
+    # Known venues with their correct coordinates
+    # Format: (address_pattern, latitude, longitude, venue_name_for_logging)
+    KNOWN_VENUES = [
+        # Comedy In Harlem - 750A St Nicholas Ave (the A suffix causes issues)
+        ("750A St Nicholas Ave", 40.8245, -73.9385, "Comedy In Harlem (750A St Nicholas)"),
+        ("750 St Nicholas Ave", 40.8245, -73.9385, "Comedy In Harlem (750 St Nicholas)"),
+
+        # Comedy In Harlem - East Harlem location
+        ("508 E 117th St", 40.7954, -73.9323, "Comedy In Harlem (East Harlem)"),
+
+        # Freddy's Bar - 627 5th Ave Brooklyn (5th Ave exists in Manhattan too)
+        ("627 5th Ave", 40.6633, -73.9911, "Freddy's Bar (Brooklyn)"),
+
+        # Halyards - 406 3rd Ave Brooklyn (3rd Ave exists in Manhattan too)
+        ("406 3rd Ave", 40.6773, -73.9858, "Halyards (Gowanus)"),
+
+        # iNine Bistro - Bronx
+        ("53 Bruckner Blvd", 40.8068, -73.9266, "iNine Bistro (Bronx)"),
+    ]
+
+    total_updated = 0
+    results = []
+
+    for address, lat, lon, name in KNOWN_VENUES:
+        updated = set_coordinates_by_address(address, lat, lon)
+        total_updated += updated
+        if updated > 0:
+            results.append(f"{name}: {updated} mic(s) updated")
+
+    return total_updated, results
+
+
 # ===========================================================================
 # HELPER FUNCTIONS — These are the "API" other parts of the app use
 # ===========================================================================
