@@ -223,8 +223,14 @@ with tab_import:
                 if st.button(f"➕ Add this mic", key=f"add_bs_{i}"):
                     try:
                         add_mic(mic)
+                        updated_mics = [item for idx, item in enumerate(new_mics) if idx != i]
+                        if updated_mics:
+                            st.session_state["badslava_new_mics"] = updated_mics
+                        else:
+                            st.session_state.pop("badslava_new_mics", None)
                         st.success(f"Added **{mic['name']}**!")
                         st.cache_data.clear()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
 
@@ -304,8 +310,14 @@ with tab_import:
                 if st.button(f"➕ Add this mic", key=f"add_fm_{i}"):
                     try:
                         add_mic(mic)
+                        updated_mics = [item for idx, item in enumerate(new_mics) if idx != i]
+                        if updated_mics:
+                            st.session_state["firemics_new_mics"] = updated_mics
+                        else:
+                            st.session_state.pop("firemics_new_mics", None)
                         st.success(f"Added **{mic['name']}**!")
                         st.cache_data.clear()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
 

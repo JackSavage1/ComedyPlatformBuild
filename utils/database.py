@@ -29,6 +29,36 @@ from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut
 import time
 
+OPEN_MICS_COLUMN_DEFS = {
+    "name": "TEXT NOT NULL",
+    "venue": "TEXT NOT NULL",
+    "address": "TEXT",
+    "neighborhood": "TEXT",
+    "borough": "TEXT",
+    "day_of_week": "TEXT NOT NULL",
+    "start_time": "TEXT NOT NULL",
+    "display_time": "TEXT",
+    "end_time": "TEXT",
+    "cost": "TEXT",
+    "set_length_min": "INTEGER",
+    "signup_method": "TEXT",
+    "signup_url": "TEXT",
+    "signup_notes": "TEXT",
+    "venue_url": "TEXT",
+    "instagram": "TEXT",
+    "urgency": "TEXT DEFAULT 'normal'",
+    "urgency_note": "TEXT",
+    "advance_days": "INTEGER DEFAULT 0",
+    "mic_rating": "REAL",
+    "notes": "TEXT",
+    "latitude": "REAL",
+    "longitude": "REAL",
+    "is_active": "BOOLEAN DEFAULT TRUE",
+    "is_biweekly": "BOOLEAN DEFAULT FALSE",
+    "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+}
+
 
 def get_connection():
     """
@@ -154,32 +184,56 @@ def init_db():
         )
     """)
 
+    _ensure_open_mics_schema(cursor)
+
     conn.commit()
     conn.close()
+
+
+def _get_table_columns(cursor, table_name):
+    """Returns the current column names for a table."""
+    cursor.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s
+    """, (table_name,))
+    return {row[0] for row in cursor.fetchall()}
+
+
+def _ensure_open_mics_schema(cursor):
+    """Adds any missing open_mics columns for older databases."""
+    existing = _get_table_columns(cursor, "open_mics")
+    for column, definition in OPEN_MICS_COLUMN_DEFS.items():
+        if column not in existing:
+            cursor.execute(
+                f"ALTER TABLE open_mics ADD COLUMN {column} {definition}"
+            )
 
 
 def migrate_add_coordinates():
     """
-    Adds latitude and longitude columns to open_mics table if they don't exist.
-    Safe to call multiple times - only adds columns if missing.
+    Backward-compatible wrapper for the old map-page migration button.
     """
     conn = get_connection()
     cursor = conn.cursor()
-
-    # Check if columns exist
-    cursor.execute("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'open_mics' AND column_name IN ('latitude', 'longitude')
-    """)
-    existing = {row[0] for row in cursor.fetchall()}
-
-    if 'latitude' not in existing:
-        cursor.execute("ALTER TABLE open_mics ADD COLUMN latitude REAL")
-    if 'longitude' not in existing:
-        cursor.execute("ALTER TABLE open_mics ADD COLUMN longitude REAL")
-
+    _ensure_open_mics_schema(cursor)
     conn.commit()
     conn.close()
+
+
+def _clean_open_mic_data(data_dict, cursor):
+    """
+    Filters a mic payload down to real open_mics columns.
+
+    This lets scraper metadata like "source" coexist without breaking inserts.
+    """
+    valid_columns = _get_table_columns(cursor, "open_mics")
+    ignored_keys = {"id", "source"}
+    return {
+        key: value
+        for key, value in data_dict.items()
+        if key not in ignored_keys and key in valid_columns
+    }
 
 
 # ===========================================================================
@@ -496,8 +550,10 @@ def seed_mics(mic_list, auto_geocode=False):
     conn = get_connection()
     cursor = conn.cursor()
 
+    _ensure_open_mics_schema(cursor)
+
     for mic in mic_list:
-        clean_data = dict(mic)
+        clean_data = _clean_open_mic_data(mic, cursor)
 
         # Auto-geocode if enabled and address exists without coordinates
         if auto_geocode and clean_data.get('address') and not clean_data.get('latitude'):
@@ -553,9 +609,15 @@ def update_mic(mic_id, data_dict):
     """
     conn = get_connection()
     cursor = conn.cursor()
+    _ensure_open_mics_schema(cursor)
+    clean_data = _clean_open_mic_data(data_dict, cursor)
 
-    set_clause = ", ".join([f"{k} = %s" for k in data_dict.keys()])
-    values = tuple(data_dict.values()) + (mic_id,)
+    if not clean_data:
+        conn.close()
+        return
+
+    set_clause = ", ".join([f"{k} = %s" for k in clean_data.keys()])
+    values = tuple(clean_data.values()) + (mic_id,)
 
     cursor.execute(
         f"UPDATE open_mics SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
@@ -583,20 +645,23 @@ def add_mic(data_dict, auto_geocode=True):
     Automatically removes 'id' if present to allow Postgres to auto-generate it.
     If auto_geocode is True and address is provided, attempts to geocode the address.
     """
-    # Remove 'id' (Postgres auto-generates it) and 'source' (not a table column)
-    clean_data = {k: v for k, v in data_dict.items() if k not in ['id', 'source']}
-
-    # Auto-geocode if address is provided and no coordinates exist
-    if auto_geocode and clean_data.get('address') and not clean_data.get('latitude'):
-        borough = clean_data.get('borough', 'New York')
-        lat, lon = geocode_address(clean_data['address'], borough)
-        if lat and lon:
-            clean_data['latitude'] = lat
-            clean_data['longitude'] = lon
-
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
+            _ensure_open_mics_schema(cursor)
+            clean_data = _clean_open_mic_data(data_dict, cursor)
+
+            if not clean_data:
+                raise ValueError("No valid open_mics fields were provided.")
+
+            # Auto-geocode if address is provided and no coordinates exist
+            if auto_geocode and clean_data.get('address') and not clean_data.get('latitude'):
+                borough = clean_data.get('borough', 'New York')
+                lat, lon = geocode_address(clean_data['address'], borough)
+                if lat and lon:
+                    clean_data['latitude'] = lat
+                    clean_data['longitude'] = lon
+
             columns = ", ".join(clean_data.keys())
             placeholders = ", ".join(["%s"] * len(clean_data))
             values = tuple(clean_data.values())
