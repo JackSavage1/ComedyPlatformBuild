@@ -233,10 +233,10 @@ with tab_log:
                     "recording_url": recording_url if recording_url else None,
                     "recording_type": recording_type,
                     "notes": notes if notes else None,
-                    "new_material": 1 if new_material else 0,
-                    "got_feedback": 1 if got_feedback else 0,
+                    "new_material": bool(new_material),
+                    "got_feedback": bool(got_feedback),
                     "feedback_notes": feedback_notes if feedback_notes else None,
-                    "would_return": 1 if would_return else 0,
+                    "would_return": bool(would_return),
                     "tags": ",".join(tags) if tags else None,
                 }
 
