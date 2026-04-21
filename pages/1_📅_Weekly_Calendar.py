@@ -23,7 +23,11 @@ from utils.database import (
 
 
 )
-
+def safe_str(value, default=""):
+    """Return value as a clean string, or default if it's nan/empty."""
+    if isinstance(value, str) and value.strip():
+        return value
+    return default
 # Ensure mic_plans table exists (in case app.py's cached init_db ran before
 # the table was added to the code)
 init_db()
