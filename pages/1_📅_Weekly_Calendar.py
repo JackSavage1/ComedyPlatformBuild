@@ -332,7 +332,7 @@ for i, day in enumerate(days):
                     )
 
                 if mic["signup_url"]:
-                    st.link_button("📝 Sign Up →", mic["signup_url"])
+                    if isinstance(mic["signup_url"], str) and mic["signup_url"].strip():     st.link_button("📝 Sign Up →", mic["signup_url"])
 
                 # Show visit count
                 if mic_id in visited_mic_ids:
