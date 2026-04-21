@@ -20,14 +20,21 @@ from utils.database import (
     init_db, get_all_mics, get_all_sets, add_set,
     set_mic_plan, remove_mic_plan, get_plans_for_week,
     get_going_mic_ids_for_week, get_sets_for_mic_date, delete_mic_hard
-
-
 )
+
+
 def safe_str(value, default=""):
-    """Return value as a clean string, or default if it's nan/empty."""
+    """Return value as a clean string, or default if it's nan/empty.
+
+    Any database field can come back as nan (pandas' 'empty') which is a float,
+    not a string. Calling string methods on nan crashes the app. This helper
+    guarantees you always get a real string to work with.
+    """
     if isinstance(value, str) and value.strip():
         return value
     return default
+
+
 # Ensure mic_plans table exists (in case app.py's cached init_db ran before
 # the table was added to the code)
 init_db()
@@ -261,8 +268,8 @@ for i, day in enumerate(days):
             )
 
             # Cost badge
-            cost = mic["cost"] if mic["cost"] else "Free"
-            cost = safe_str(mic["cost"])
+            cost = safe_str(mic["cost"], default="Free")
+            if "free" in cost.lower():
                 cost_badge = "🆓"
             elif "drink" in cost.lower():
                 cost_badge = "🍺"
@@ -310,35 +317,40 @@ for i, day in enumerate(days):
                 elif plan_status == "cancelled":
                     st.error("This mic is marked as cancelled")
 
-                st.write(f"🏠 **{mic['venue']}**")
-                st.write(f"📍 {mic['address']}")
+                st.write(f"🏠 **{safe_str(mic['venue'])}**")
+                st.write(f"📍 {safe_str(mic['address'])}")
                 st.write(f"💰 {cost}")
 
-                if mic["signup_method"]:
-                    st.write(f"📝 {mic['signup_method'].replace('_', ' ').title()}")
+                signup_method = safe_str(mic["signup_method"])
+                if signup_method:
+                    st.write(f"📝 {signup_method.replace('_', ' ').title()}")
 
-                if mic["signup_notes"]:
-                    st.caption(f"📌 {mic['signup_notes']}")
+                signup_notes = safe_str(mic["signup_notes"])
+                if signup_notes:
+                    st.caption(f"📌 {signup_notes}")
 
                 if signup_deadline:
                     st.info(signup_deadline)
 
                 if mic["urgency"] == "high":
-                    st.warning(mic["urgency_note"] or "Signs up fast — book ahead!")
+                    st.warning(safe_str(mic["urgency_note"], default="Signs up fast — book ahead!"))
                 elif mic["urgency"] == "medium":
-                    st.info(mic["urgency_note"] or "Book a few days early")
+                    st.info(safe_str(mic["urgency_note"], default="Book a few days early"))
 
-                if mic["notes"]:
-                    st.caption(f"💡 {mic['notes']}")
+                notes = safe_str(mic["notes"])
+                if notes:
+                    st.caption(f"💡 {notes}")
 
-                if mic["instagram"]:
-                    handle = mic["instagram"].replace("@", "") if isinstance(mic["instagram"], str) else ""
+                instagram = safe_str(mic["instagram"])
+                if instagram:
+                    handle = instagram.replace("@", "")
                     st.markdown(
-                        f"📸 [{mic['instagram']}](https://instagram.com/{handle})"
+                        f"📸 [{instagram}](https://instagram.com/{handle})"
                     )
 
-                if mic["signup_url"]:
-                    if isinstance(mic["signup_url"], str) and mic["signup_url"].strip():     st.link_button("📝 Sign Up →", mic["signup_url"])
+                signup_url = safe_str(mic["signup_url"])
+                if signup_url:
+                    st.link_button("📝 Sign Up →", signup_url)
 
                 # Show visit count
                 if mic_id in visited_mic_ids:
