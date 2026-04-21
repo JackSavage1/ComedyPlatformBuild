@@ -326,7 +326,7 @@ for i, day in enumerate(days):
                     st.caption(f"💡 {mic['notes']}")
 
                 if mic["instagram"]:
-                    handle = mic["instagram"].replace("@", "")
+                    handle = mic["instagram"].replace("@", "") if isinstance(mic["instagram"], str) else ""
                     st.markdown(
                         f"📸 [{mic['instagram']}](https://instagram.com/{handle})"
                     )
