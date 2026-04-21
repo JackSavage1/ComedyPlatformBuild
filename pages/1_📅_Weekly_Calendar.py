@@ -21,11 +21,7 @@ from utils.database import (
     set_mic_plan, remove_mic_plan, get_plans_for_week,
     get_going_mic_ids_for_week, get_sets_for_mic_date, delete_mic_hard
 
-def safe_str(value, default=""):
-    """Return value as a clean string, or default if it's nan/empty."""
-    if isinstance(value, str) and value.strip():
-        return value
-    return default
+
 )
 
 # Ensure mic_plans table exists (in case app.py's cached init_db ran before
