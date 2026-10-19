@@ -22,19 +22,26 @@ Think of it like this:
 Bad Slava stores all mics in a JavaScript array called `venue`:
     var venue = ["entry1", "entry2", ...];
 
-Each entry is a string with fields separated by <br> tags:
-    "Monday<br>Mic Name<br><b>Venue Name</b><br>Address<br>City, State<br>Time<br>Cost<br>Frequency<br>Phone"
+Each entry is a string with fields separated by <br> tags. As of Oct 2026
+the order is:
+    "Monday<br>Mic Name<br><b>Venue Name</b><br>Address<br>City, State<br>Phone<br>Time<br>Cost<br>Frequency"
 
-Field positions (0-indexed):
+The first five fields are stable:
     0: Day of week (Monday, Tuesday, etc.)
     1: Mic name (can be empty)
     2: Venue name (wrapped in <b> tags)
     3: Street address
     4: City, State
-    5: Time (e.g., "7:00pm")
-    6: Cost (e.g., "Free", "$5 for 5 minutes", "Paid")
-    7: Frequency (e.g., "Weekly", "Monthly", "Biweekly")
-    8: Phone number
+
+The remaining fields (phone, time, cost, frequency) have MOVED AROUND at
+least once. Bad Slava originally put the phone last; in Oct 2026 it sat at
+position 5, which made this scraper store phone numbers as start times.
+So we no longer trust positions for those four. Instead we look at each
+remaining field and classify it by what it LOOKS like:
+    - a time looks like "7:00pm" or "11:59pm"
+    - a phone looks like "(646) 528-6574"
+    - a frequency is one of "Weekly", "Biweekly", "Monthly", ...
+    - whatever is left is the cost ("Free", "$5 for 5 minutes", "Paid")
 
 === WHAT IS REGEX? ===
 
@@ -77,6 +84,43 @@ NYC_CITIES = {
     "new york", "brooklyn", "bronx", "queens", "staten island",
     "long island city", "astoria", "flushing", "jamaica",
 }
+
+# Patterns used to recognise the "floating" fields by shape, since Bad Slava
+# has moved them around. See the module docstring for why.
+TIME_RE = re.compile(r"^\d{1,2}(:\d{2})?\s*(am|pm)$", re.IGNORECASE)
+PHONE_RE = re.compile(r"^\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$")
+FREQUENCY_WORDS = {"weekly", "biweekly", "bi-weekly", "monthly", "daily", "varies"}
+
+
+def _classify_tail_fields(fields):
+    """
+    Given the fields that come AFTER city/state, figure out which one is the
+    time, phone, cost, and frequency, regardless of the order they arrive in.
+
+    Returns a dict: {"time": ..., "phone": ..., "cost": ..., "frequency": ...}
+    Any field that can't be found is None.
+    """
+    time_str = phone = frequency = None
+    leftovers = []
+
+    for raw in fields:
+        value = _strip_html(raw).strip()
+        if not value:
+            continue
+        if time_str is None and TIME_RE.match(value):
+            time_str = value
+        elif phone is None and PHONE_RE.match(value):
+            phone = value
+        elif frequency is None and value.lower() in FREQUENCY_WORDS:
+            frequency = value
+        else:
+            leftovers.append(value)
+
+    # Cost is the only field with no reliable shape ("Free", "Paid",
+    # "$5 for 5 minutes", "1 drink min"). It's whatever didn't match above.
+    cost = leftovers[0] if leftovers else None
+
+    return {"time": time_str, "phone": phone, "cost": cost, "frequency": frequency}
 
 
 def scrape_badslava():
@@ -159,10 +203,17 @@ def scrape_badslava():
             venue_name = _strip_html(fields[2]).strip()
             address = _strip_html(fields[3]).strip()
             city_state = _strip_html(fields[4]).strip()
-            time_str = fields[5].strip()
-            cost = _strip_html(fields[6]).strip() if len(fields) > 6 else None
-            frequency = _strip_html(fields[7]).strip() if len(fields) > 7 else None
-            phone = _strip_html(fields[8]).strip() if len(fields) > 8 else None
+
+            # Everything after city/state is recognised by shape, not position
+            tail = _classify_tail_fields(fields[5:])
+            time_str = tail["time"]
+            cost = tail["cost"]
+            frequency = tail["frequency"]
+            phone = tail["phone"]
+
+            # A mic with no recognisable time can't be placed on the calendar
+            if not time_str:
+                continue
 
             # =============================================================
             # STEP 4: FILTER TO NYC ONLY
