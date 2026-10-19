@@ -221,19 +221,47 @@ def migrate_add_coordinates():
     conn.close()
 
 
+# Columns declared BOOLEAN in Postgres. The app started on SQLite, which
+# stores booleans as 0/1, and several scrapers still pass integers. Postgres
+# refuses an integer in a boolean column, so we coerce here, at the single
+# chokepoint every insert and update goes through.
+BOOLEAN_COLUMNS = {
+    name for name, col_type in OPEN_MICS_COLUMN_DEFS.items()
+    if col_type.upper().startswith("BOOLEAN")
+}
+
+
+def _to_bool(value):
+    """Turn 0/1, '0'/'1', 'true'/'false', None, or a real bool into a bool."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "t", "yes", "y")
+    return bool(value)
+
+
 def _clean_open_mic_data(data_dict, cursor):
     """
-    Filters a mic payload down to real open_mics columns.
+    Filters a mic payload down to real open_mics columns and coerces
+    boolean columns to real Python bools.
 
-    This lets scraper metadata like "source" coexist without breaking inserts.
+    This lets scraper metadata like "source" coexist without breaking inserts,
+    and keeps an integer 0/1 from a scraper from crashing a Postgres insert.
     """
     valid_columns = _get_table_columns(cursor, "open_mics")
     ignored_keys = {"id", "source"}
-    return {
-        key: value
-        for key, value in data_dict.items()
-        if key not in ignored_keys and key in valid_columns
-    }
+    cleaned = {}
+    for key, value in data_dict.items():
+        if key in ignored_keys or key not in valid_columns:
+            continue
+        if key in BOOLEAN_COLUMNS:
+            value = _to_bool(value)
+        cleaned[key] = value
+    return cleaned
 
 
 # ===========================================================================

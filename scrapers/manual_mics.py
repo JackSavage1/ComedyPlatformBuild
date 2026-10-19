@@ -184,7 +184,7 @@ MANUAL_MICS = [
         "display_time": "7:30 PM",
         "cost": "Free",
         "signup_method": "in_person",
-        "is_biweekly": 1,
+        "is_biweekly": True,
         "urgency": "normal",
         "notes": "Every 2nd and 4th Wednesday",
     },

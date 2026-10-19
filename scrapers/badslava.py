@@ -208,7 +208,7 @@ def scrape_badslava():
                 "display_time": time_str.upper().replace("PM", " PM").replace("AM", " AM"),
                 "cost": cost,
                 "signup_method": "in_person",  # Bad Slava doesn't specify
-                "is_biweekly": 1 if is_biweekly else 0,
+                "is_biweekly": bool(is_biweekly),
                 "notes": f"Frequency: {frequency}" if is_monthly else None,
                 "source": "badslava",
             }

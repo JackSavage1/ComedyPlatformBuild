@@ -212,7 +212,7 @@ def scrape_firemics():
             # --- Frequency ---
             frequency = event.get("frequency", {})
             freq_option = frequency.get("option", "")
-            is_biweekly = 1 if freq_option == "biweekly" else 0
+            is_biweekly = freq_option == "biweekly"
 
             # --- Neighborhood & borough ---
             neighborhood = _guess_neighborhood(street_address, city)
