@@ -139,9 +139,26 @@ going_mic_ids = get_going_mic_ids_for_week(week_start, week_end)
 # FILTERS
 # ---------------------------------------------------------------------------
 st.markdown("### 🔍 Filters")
-filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(5)
+filter_col0, filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(6)
 
-neighborhoods = sorted(all_mics["neighborhood"].dropna().unique().tolist())
+# Borough list is fixed so every borough is always offered, even on a week
+# where a borough happens to have no mics yet. Order matches the Settings page.
+BOROUGHS = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
+
+with filter_col0:
+    selected_boroughs = st.multiselect(
+        "Borough",
+        options=BOROUGHS,
+        default=[],
+        placeholder="All boroughs"
+    )
+
+# Neighborhood list narrows to the chosen boroughs so the dropdown stays short
+if selected_boroughs:
+    neighborhood_source = all_mics[all_mics["borough"].isin(selected_boroughs)]
+else:
+    neighborhood_source = all_mics
+neighborhoods = sorted(neighborhood_source["neighborhood"].dropna().unique().tolist())
 
 with filter_col1:
     selected_neighborhoods = st.multiselect(
@@ -175,6 +192,9 @@ with filter_col5:
 # APPLY FILTERS
 # ---------------------------------------------------------------------------
 filtered_mics = all_mics.copy()
+
+if selected_boroughs:
+    filtered_mics = filtered_mics[filtered_mics["borough"].isin(selected_boroughs)]
 
 if selected_neighborhoods:
     filtered_mics = filtered_mics[filtered_mics["neighborhood"].isin(selected_neighborhoods)]
