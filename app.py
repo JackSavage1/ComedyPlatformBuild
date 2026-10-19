@@ -22,6 +22,19 @@ from datetime import datetime
 from utils.database import init_db, get_mics_today, get_mics_by_day, get_all_mics
 from scrapers.manual_mics import seed_database
 
+
+def safe_str(value, default=""):
+    """Return value as a clean string, or default if it's nan/empty.
+
+    Any database field can come back as nan (pandas' 'empty') which is a float,
+    not a string. In Python `if nan:` is TRUE, so a plain `if mic["signup_url"]:`
+    check passes and then st.link_button crashes on a float. This helper
+    guarantees you always get a real string (or the default) to work with.
+    """
+    if isinstance(value, str) and value.strip():
+        return value
+    return default
+
 # ---------------------------------------------------------------------------
 # PAGE CONFIG — Must be the first Streamlit command
 # ---------------------------------------------------------------------------
@@ -81,7 +94,7 @@ else:
         )
 
         # Build cost display
-        cost_display = mic["cost"] if mic["cost"] else "Free/TBD"
+        cost_display = safe_str(mic["cost"], "Free/TBD")
 
         # Use an expander for each mic — click to see details
         with st.expander(
@@ -90,7 +103,12 @@ else:
             col1, col2 = st.columns(2)
 
             with col1:
-                st.write(f"📍 **{mic['address']}**, {mic['neighborhood']}, {mic['borough']}")
+                address = safe_str(mic["address"], "Address TBD")
+                neighborhood = safe_str(mic["neighborhood"])
+                borough = safe_str(mic["borough"])
+                location_parts = [p for p in (neighborhood, borough) if p]
+                location_suffix = f", {', '.join(location_parts)}" if location_parts else ""
+                st.write(f"📍 **{address}**{location_suffix}")
                 st.write(f"💰 {cost_display}")
                 set_length = mic.get("set_length_min")
                 # Handle None, empty, or NaN values robustly
@@ -102,25 +120,32 @@ else:
                         st.write("⏱️ Set length: N/A")
                 else:
                     st.write("⏱️ Set length: N/A")
-                if mic["signup_method"]:
-                    st.write(f"📝 Signup: {mic['signup_method']}")
-                if mic["signup_notes"]:
-                    st.write(f"📌 {mic['signup_notes']}")
+                signup_method = safe_str(mic["signup_method"])
+                if signup_method:
+                    st.write(f"📝 Signup: {signup_method}")
+                signup_notes = safe_str(mic["signup_notes"])
+                if signup_notes:
+                    st.write(f"📌 {signup_notes}")
 
             with col2:
+                urgency_note = safe_str(mic["urgency_note"])
                 if mic["urgency"] == "high":
-                    st.warning(f"🔴 HIGH URGENCY — {mic['urgency_note'] or 'Signs up fast!'}")
+                    st.warning(f"🔴 HIGH URGENCY — {urgency_note or 'Signs up fast!'}")
                 elif mic["urgency"] == "medium":
-                    st.info(f"🟡 MEDIUM — {mic['urgency_note'] or 'Book a few days early'}")
+                    st.info(f"🟡 MEDIUM — {urgency_note or 'Book a few days early'}")
 
-                if mic["instagram"]:
-                    st.write(f"📸 [{mic['instagram']}](https://instagram.com/{mic['instagram'].replace('@', '')})")
+                instagram = safe_str(mic["instagram"])
+                if instagram:
+                    handle = instagram.replace("@", "")
+                    st.write(f"📸 [{instagram}](https://instagram.com/{handle})")
 
-                if mic["signup_url"]:
-                    st.link_button("📝 Sign Up →", mic["signup_url"])
+                signup_url = safe_str(mic["signup_url"])
+                if signup_url:
+                    st.link_button("📝 Sign Up →", signup_url)
 
-                if mic["notes"]:
-                    st.caption(f"💡 {mic['notes']}")
+                notes = safe_str(mic["notes"])
+                if notes:
+                    st.caption(f"💡 {notes}")
 
 # ---------------------------------------------------------------------------
 # TOMORROW'S MICS (preview)
@@ -145,11 +170,13 @@ else:
         urgency_dot = {"high": "🔴", "medium": "🟡", "normal": "🟢"}.get(
             mic["urgency"], "🟢"
         )
-        cost_display = mic["cost"] if mic["cost"] else "Free/TBD"
+        cost_display = safe_str(mic["cost"], "Free/TBD")
+        neighborhood = safe_str(mic["neighborhood"])
+        neighborhood_tag = f" ({neighborhood})" if neighborhood else ""
 
         st.write(
-            f"{urgency_dot} **{mic['display_time']}** — {mic['name']} @ {mic['venue']} "
-            f"({mic['neighborhood']}) · {cost_display}"
+            f"{urgency_dot} **{mic['display_time']}** — {mic['name']} @ {mic['venue']}"
+            f"{neighborhood_tag} · {cost_display}"
         )
 
 # ---------------------------------------------------------------------------
