@@ -17,7 +17,7 @@ Key Streamlit concepts:
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date
-from utils.database import get_all_mics, add_set, get_all_sets, update_set
+from utils.database import get_all_mics, add_set, get_all_sets, update_set, delete_planned_set
 
 # ---------------------------------------------------------------------------
 # PAGE CONFIG
@@ -55,21 +55,45 @@ with tab_log:
         st.markdown("#### 📋 Planned Sets — Ready to Log")
         st.caption(
             "You marked these as 'Going' on the calendar. "
-            "Click one to fill in your set details."
+            "Click one to fill in your set details, or ✕ to remove it if you didn't go."
         )
         for _, ps in planned_sets.iterrows():
             mic_name = ps.get("mic_name", "Unknown")
             venue = ps.get("venue", "")
             date_str = str(ps["date_performed"])[:10]
-            if st.button(
-                f"📝 Log: **{mic_name}** @ {venue} — {date_str}",
-                key=f"log_planned_{ps['id']}",
-                use_container_width=True,
-            ):
-                st.session_state["prefill_set_id"] = int(ps["id"])
-                st.session_state["prefill_mic_id"] = int(ps["open_mic_id"])
-                st.session_state["prefill_date"] = date_str
-                st.rerun()
+            set_id = int(ps["id"])
+
+            # Two columns: wide "Log" button on the left, small ✕ on the right.
+            # The [12, 1] ratio keeps the ✕ compact so it reads as a dismiss
+            # control rather than a second primary action.
+            log_col, remove_col = st.columns([12, 1])
+
+            with log_col:
+                if st.button(
+                    f"📝 Log: **{mic_name}** @ {venue} — {date_str}",
+                    key=f"log_planned_{set_id}",
+                    use_container_width=True,
+                ):
+                    st.session_state["prefill_set_id"] = set_id
+                    st.session_state["prefill_mic_id"] = int(ps["open_mic_id"])
+                    st.session_state["prefill_date"] = date_str
+                    st.rerun()
+
+            with remove_col:
+                if st.button(
+                    "✕",
+                    key=f"remove_planned_{set_id}",
+                    help="Didn't go? Remove this planned set.",
+                    use_container_width=True,
+                ):
+                    delete_planned_set(set_id)
+                    # If this was the set currently loaded into the form,
+                    # clear the prefill so the form doesn't point at a
+                    # record that no longer exists.
+                    if st.session_state.get("prefill_set_id") == set_id:
+                        for key in ["prefill_set_id", "prefill_mic_id", "prefill_date"]:
+                            st.session_state.pop(key, None)
+                    st.rerun()
         st.markdown("---")
 
     # Check if we're filling in a planned set

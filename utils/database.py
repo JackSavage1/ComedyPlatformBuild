@@ -774,6 +774,43 @@ def delete_mic_hard(mic_id):
     conn.close()
 
 
+def delete_planned_set(set_id):
+    """
+    Removes a planned set you ended up not going to.
+
+    Clicking 'Going' on the calendar creates TWO records: a mic_plans row
+    (so the calendar shows the green status) and a skeletal my_sets row
+    (so the My Sets page can prompt you to log it). This deletes both so
+    the mic disappears from 'Planned Sets' and the calendar resets.
+
+    Safety: only deletes a my_sets row that has no set_rating. A set you
+    actually logged is never touched by this function.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Look up which mic and date this planned set points at, so we can
+    # remove the matching calendar plan too.
+    cursor.execute(
+        "SELECT open_mic_id, date_performed FROM my_sets "
+        "WHERE id = %s AND set_rating IS NULL",
+        (set_id,)
+    )
+    row = cursor.fetchone()
+
+    if row is not None:
+        open_mic_id, date_performed = row
+        cursor.execute("DELETE FROM my_sets WHERE id = %s", (set_id,))
+        cursor.execute(
+            "DELETE FROM mic_plans WHERE open_mic_id = %s AND plan_date = %s",
+            (open_mic_id, date_performed)
+        )
+        conn.commit()
+
+    conn.close()
+    return row is not None
+
+
 def update_set(set_id, data_dict):
     """
     Updates an existing set entry with new data.
