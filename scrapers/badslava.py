@@ -382,8 +382,10 @@ def compare_badslava_with_database(scraped_mics, existing_mics_df):
                 matched += 1
                 break
 
-            # Also try matching by address + day + similar time
-            if (existing.get("address") and scraped.get("address")
+            # Also try matching by address + day + similar time.
+            # isinstance, not truthiness: an empty address comes back from
+            # pandas as NaN, which is truthy and has no [:10].
+            if (isinstance(existing.get("address"), str) and scraped.get("address")
                     and existing["address"][:10].lower() == scraped["address"][:10].lower()
                     and s_day == e_day):
                 found = True

@@ -20,6 +20,7 @@ pandas DataFrames:
 - DataFrames are what Streamlit uses to display tables, charts, etc.
 """
 
+import os
 import psycopg2
 import psycopg2.extras
 import pandas as pd
@@ -68,17 +69,48 @@ def get_connection():
     Locally: .streamlit/secrets.toml
     On Streamlit Cloud: configured in the app's Secrets settings.
 
+    Outside Streamlit (e.g. the nightly scraper on GitHub Actions, which has
+    no secrets.toml) we fall back to environment variables:
+        SUPABASE_DB_HOST, SUPABASE_DB_PORT (default 5432),
+        SUPABASE_DB_NAME (default postgres), SUPABASE_DB_USER,
+        SUPABASE_DB_PASSWORD
+
     We pass individual parameters instead of a single URL to avoid issues
     with special characters (like brackets) in the password.
     """
-    db = st.secrets["database"]
-    conn = psycopg2.connect(
-        host=db["host"],
-        port=db["port"],
-        dbname=db["dbname"],
-        user=db["user"],
-        password=db["password"],
-    )
+    try:
+        db = st.secrets["database"]
+    except (FileNotFoundError, KeyError):
+        # FileNotFoundError: no secrets.toml at all (Streamlit's own
+        # StreamlitSecretNotFoundError is a subclass of it).
+        # KeyError: a secrets file exists but has no [database] section.
+        db = None
+
+    if db is not None:
+        params = {
+            "host": db["host"],
+            "port": db["port"],
+            "dbname": db["dbname"],
+            "user": db["user"],
+            "password": db["password"],
+        }
+    else:
+        host = os.environ.get("SUPABASE_DB_HOST", "").strip()
+        if not host:
+            raise RuntimeError(
+                "No database settings found. Add a [database] section to "
+                ".streamlit/secrets.toml, or set the SUPABASE_DB_HOST, "
+                "SUPABASE_DB_USER and SUPABASE_DB_PASSWORD environment variables."
+            )
+        params = {
+            "host": host,
+            "port": os.environ.get("SUPABASE_DB_PORT", "").strip() or "5432",
+            "dbname": os.environ.get("SUPABASE_DB_NAME", "").strip() or "postgres",
+            "user": os.environ.get("SUPABASE_DB_USER", ""),
+            "password": os.environ.get("SUPABASE_DB_PASSWORD", ""),
+        }
+
+    conn = psycopg2.connect(**params)
     return conn
 
 

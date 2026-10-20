@@ -13,3 +13,6 @@ __pycache__/
 
 # Claude Code project files
 .claude/
+
+# macOS Finder metadata (shows up once you open the iOS project on a Mac)
+.DS_Store
