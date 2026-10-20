@@ -95,7 +95,18 @@ def get_connection():
             "password": db["password"],
         }
     else:
-        host = os.environ.get("SUPABASE_DB_HOST", "").strip()
+        def env(name):
+            """Read an env var, dropping one pair of surrounding quotes.
+
+            Values copied from secrets.toml often keep TOML's quotes
+            ("abc" instead of abc), and GitHub stores secrets verbatim.
+            """
+            value = os.environ.get(name, "").strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            return value
+
+        host = env("SUPABASE_DB_HOST")
         if not host:
             raise RuntimeError(
                 "No database settings found. Add a [database] section to "
@@ -104,10 +115,10 @@ def get_connection():
             )
         params = {
             "host": host,
-            "port": os.environ.get("SUPABASE_DB_PORT", "").strip() or "5432",
-            "dbname": os.environ.get("SUPABASE_DB_NAME", "").strip() or "postgres",
-            "user": os.environ.get("SUPABASE_DB_USER", ""),
-            "password": os.environ.get("SUPABASE_DB_PASSWORD", ""),
+            "port": env("SUPABASE_DB_PORT") or "5432",
+            "dbname": env("SUPABASE_DB_NAME") or "postgres",
+            "user": env("SUPABASE_DB_USER"),
+            "password": env("SUPABASE_DB_PASSWORD"),
         }
 
     conn = psycopg2.connect(**params)
