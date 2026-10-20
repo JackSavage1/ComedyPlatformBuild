@@ -63,7 +63,10 @@ targets:
     settings:
       base:
         PRODUCT_NAME: MicTracker
-        PRODUCT_BUNDLE_IDENTIFIER: com.comedyplatform.mictracker
+        # Defaults to com.comedyplatform.mictracker (Config/Base.xcconfig);
+        # ios/setup.sh gives each person a unique one in Secrets.xcconfig so
+        # a free Apple ID can sign it.
+        PRODUCT_BUNDLE_IDENTIFIER: $(MIC_TRACKER_BUNDLE_ID)
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

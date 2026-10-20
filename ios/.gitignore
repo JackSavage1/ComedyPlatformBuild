@@ -13,3 +13,6 @@ build/
 *.xcresult
 .swiftpm/
 .DS_Store
+
+# Local XcodeGen download from setup.sh
+.tools/

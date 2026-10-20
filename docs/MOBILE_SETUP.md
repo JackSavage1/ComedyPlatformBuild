@@ -131,8 +131,19 @@ sidebar) **→ API**. On newer dashboards they're split across two pages:
 
 ## 6. Run the iOS app
 
-You need a Mac with **Xcode 15 or newer** (Xcode 16 recommended) and
-[Homebrew](https://brew.sh).
+You need a Mac with **Xcode** (from the Mac App Store; open it once after
+installing).
+
+**Quick way — one command.** In Terminal, in your copy of this repo:
+
+```bash
+bash ios/setup.sh
+```
+
+It installs XcodeGen if needed, asks you to paste your anon key, writes
+`ios/Config/Secrets.xcconfig` (with a bundle ID unique to you, which a free
+Apple ID needs), generates the project and opens Xcode. Then continue at
+**step 5** below. The manual steps 1–4 are what the script does for you.
 
 1. Install XcodeGen. This tool generates the Xcode project from
    `ios/project.yml`.

@@ -185,3 +185,65 @@ jobs:
           name: ios-test-results
           path: ios/build/TestResults.xcresult
           if-no-files-found: ignore
+
+  # The owner builds on their own Mac with whatever Xcode the App Store has
+  # (often newer than 16.x), for a real iPhone. Check that combination too:
+  # newest Xcode on the image, device build, a sample Secrets.xcconfig like
+  # ios/setup.sh writes. No signing on CI.
+  device-build-latest-xcode:
+    name: Device build (newest Xcode)
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    defaults:
+      run:
+        working-directory: ios
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Select the newest Xcode
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -v -i beta | sort -V | tail -n 1 || true)
+          if [ -n "$XCODE_APP" ]; then
+            echo "Selecting $XCODE_APP"
+            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Sample Secrets.xcconfig (same shape ios/setup.sh writes)
+        run: |
+          cat > Config/Secrets.xcconfig <<'XC'
+          SUPABASE_URL = https:/$()/example.supabase.co
+          SUPABASE_ANON_KEY = ci-placeholder-key
+          MIC_TRACKER_BUNDLE_ID = com.comedyplatform.mictracker.ci
+          DEVELOPMENT_TEAM =
+          XC
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build app (generic iOS device)
+        run: |
+          xcodebuild build \
+            -quiet \
+            -project MicTracker.xcodeproj \
+            -scheme MicTracker \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Check the settings reached the app
+        run: |
+          PLIST=$(find build/DerivedData/Build/Products -name Info.plist -path '*MicTracker.app/*' | head -n 1)
+          /usr/libexec/PlistBuddy -c 'Print :SupabaseURL' "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SupabaseURL' "$PLIST")" = "https://example.supabase.co"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = "com.comedyplatform.mictracker.ci"
