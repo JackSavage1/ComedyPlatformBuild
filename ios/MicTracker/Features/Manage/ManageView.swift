@@ -10,6 +10,7 @@ import SwiftUI
 //   🎤 Manage Mics              → searchable list → Mic Detail (no date)
 //   📍 Geocoding                → coordinates X / Y, "Geocode with device"
 //   👤 Account                  → signed-in email, Sign out
+//                                 (demo mode: "Demo mode", Exit demo)
 //
 // Contract (see Shared/ManageToolbarButton.swift): this view is shown in a
 // sheet that ALREADY wraps it in a NavigationStack with a "Done" button, so
@@ -113,14 +114,27 @@ struct ManageView: View {
 
     private var accountSection: some View {
         Section {
-            LabeledContent("Signed in as", value: signedInEmail)
-            Button(role: .destructive) {
-                isConfirmingSignOut = true
-            } label: {
-                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+            if store.isDemoMode {
+                LabeledContent("Signed in as", value: "Demo mode")
+                Button {
+                    exitDemo()
+                } label: {
+                    Label("Exit demo", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+            } else {
+                LabeledContent("Signed in as", value: signedInEmail)
+                Button(role: .destructive) {
+                    isConfirmingSignOut = true
+                } label: {
+                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
             }
         } header: {
             Text("Account")
+        } footer: {
+            if store.isDemoMode {
+                Text("You're exploring sample data. Changes are kept in memory only and reset when the app restarts.")
+            }
         }
     }
 
@@ -134,6 +148,15 @@ struct ManageView: View {
             return email
         }
         return "Unknown"
+    }
+
+    /// Closes the sheet, then leaves the demo (RootView shows the gate again).
+    private func exitDemo() {
+        let appStore = store
+        dismiss()
+        Task { @MainActor in
+            appStore.exitDemo()
+        }
     }
 
     /// Closes the sheet, then signs out (RootView then shows Sign in).

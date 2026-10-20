@@ -23,7 +23,8 @@ struct CalendarView: View {
     /// The day the user tapped (nil = the default for the week).
     @State private var selectedDate: CalendarDate?
     @State private var filters = CalendarFilters()
-    @State private var isShowingFilters = false
+    /// Starts open only for `-screen calendar-filters` (CI screenshots).
+    @State private var isShowingFilters = LaunchOptions.current.opensCalendarFilters
 
     var body: some View {
         // Snapshot everything this render needs, so all parts agree.

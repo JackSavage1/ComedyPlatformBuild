@@ -15,11 +15,16 @@ import SwiftUI
 struct TonightView: View {
     @Environment(AppStore.self) private var store
 
+    // Launch hooks for CI screenshots (LaunchOptions): empty / false on a
+    // normal launch.
+    @State private var path = NavigationPath(LaunchOptions.current.initialRoutes(in: .tonight))
+    @State private var isShowingLaunchManage = LaunchOptions.current.opensManage
+
     var body: some View {
         // Read "today" once per render so every section agrees on the date.
         let today = CalendarDate.today()
 
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 dateHeader(today)
                 tonightSection(today)
@@ -35,6 +40,10 @@ struct TonightView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     ManageToolbarButton()
                 }
+            }
+            .launchRouteDestinations()
+            .sheet(isPresented: $isShowingLaunchManage) {
+                ManageSheet(store: store, initialRoutes: LaunchOptions.current.initialRoutes(in: .manage))
             }
         }
     }

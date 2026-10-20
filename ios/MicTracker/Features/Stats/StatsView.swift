@@ -23,6 +23,10 @@ import SwiftUI
 struct StatsView: View {
     @Environment(AppStore.self) private var store
 
+    /// `-screen stats-charts` (CI screenshots) scrolls to the first chart once.
+    @State private var hasScrolledForLaunch = false
+    private static let firstChartID = "set-rating-over-time"
+
     var body: some View {
         // Build every series once per render so all cards agree.
         let snapshot = StatsSnapshot(
@@ -31,25 +35,41 @@ struct StatsView: View {
             activeMicCount: store.activeMics.count,
             today: CalendarDate.today()
         )
+        let hasCharts = !snapshot.isEmpty
 
         NavigationStack {
-            ScrollView {
-                if !store.hasLoadedOnce && store.sets.isEmpty {
-                    ProgressView("Loading your stats…")
-                        .padding(.top, 60)
-                        .frame(maxWidth: .infinity)
-                } else if snapshot.isEmpty {
-                    StatsEmptyState()
-                } else {
-                    cards(snapshot)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    if !store.hasLoadedOnce && store.sets.isEmpty {
+                        ProgressView("Loading your stats…")
+                            .padding(.top, 60)
+                            .frame(maxWidth: .infinity)
+                    } else if snapshot.isEmpty {
+                        StatsEmptyState()
+                    } else {
+                        cards(snapshot)
+                    }
+                }
+                .background(Theme.groupedBackground)
+                .refreshable {
+                    await store.refreshAll()
+                }
+                .navigationTitle("Stats")
+                .task(id: hasCharts) {
+                    await scrollToChartsForLaunch(proxy, hasCharts: hasCharts)
                 }
             }
-            .background(Theme.groupedBackground)
-            .refreshable {
-                await store.refreshAll()
-            }
-            .navigationTitle("Stats")
         }
+    }
+
+    /// Launch hook: once the charts exist, scroll so "Set Rating Over Time"
+    /// is at the top. Does nothing on a normal launch.
+    private func scrollToChartsForLaunch(_ proxy: ScrollViewProxy, hasCharts: Bool) async {
+        guard LaunchOptions.current.scrollsToStatsCharts, hasCharts, !hasScrolledForLaunch else { return }
+        hasScrolledForLaunch = true
+        // Let the cards lay out first.
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        proxy.scrollTo(StatsView.firstChartID, anchor: .top)
     }
 
     // MARK: - Cards
@@ -61,6 +81,7 @@ struct StatsView: View {
             StatsCard(title: "📈 Set Rating Over Time", subtitle: trendSubtitle(snapshot)) {
                 StatsRatingOverTimeChart(points: snapshot.ratingPoints, trend: snapshot.trend)
             }
+            .id(StatsView.firstChartID)
 
             StatsCard(title: "👥 Crowd vs Set Rating", subtitle: "Bigger dots = bigger crowds") {
                 StatsCrowdVsSetChart(points: snapshot.ratingPoints)

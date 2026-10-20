@@ -19,16 +19,19 @@ import SwiftUI
 struct SetsView: View {
     @Environment(AppStore.self) private var store
 
-    @State private var mode: SetsMode = .log
+    /// History first only for `-screen sets-history` / `set-detail` (CI screenshots).
+    @State private var mode: SetsMode = LaunchOptions.current.opensSetHistory ? .history : .log
     /// What the Log a Set form currently holds.
     @State private var draft = SetDraft(today: CalendarDate.today())
     /// The planned `my_sets` row being filled in (saving UPDATEs it), or nil
     /// for a brand-new set (saving INSERTs).
     @State private var prefillSetID: Int?
     @State private var historyFilter = SetHistoryFilter()
+    /// Empty unless `-screen set-detail` pushed Set Detail at launch.
+    @State private var path = NavigationPath(LaunchOptions.current.initialRoutes(in: .sets))
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 Picker("Section", selection: $mode) {
                     ForEach(SetsMode.allCases) { option in
@@ -52,6 +55,7 @@ struct SetsView: View {
             .background(Theme.groupedBackground)
             .navigationTitle("My Sets")
             .navigationBarTitleDisplayMode(.inline)
+            .launchRouteDestinations()
         }
     }
 

@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Spec 6.1: app name + 🎤, email, password, Sign in, error text.
 /// There is no sign-up here — the owner creates the account in the Supabase
-/// dashboard (docs/MOBILE_SETUP.md).
+/// dashboard (docs/MOBILE_SETUP.md). "Try the demo" (spec 8.1) opens the app
+/// with sample data instead.
 @MainActor
 struct SignInView: View {
     @Environment(AppStore.self) private var store
@@ -75,6 +76,8 @@ struct SignInView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(auth.isSigningIn || email.isEmpty || password.isEmpty)
+
+                TryDemoButton()
 
                 Text("Accounts are created by the owner in the Supabase dashboard — see docs/MOBILE_SETUP.md.")
                     .font(.footnote)

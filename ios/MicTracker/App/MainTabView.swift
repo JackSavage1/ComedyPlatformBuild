@@ -21,13 +21,24 @@ enum MainTab: Hashable {
     case map
     case sets
     case stats
+
+    /// The tab a `-screen …` launch starts on (Tonight for everything else).
+    init(launch screen: LaunchScreen?) {
+        switch screen {
+        case .calendar?, .calendarFilters?: self = .calendar
+        case .map?: self = .map
+        case .setsLog?, .setsHistory?, .setDetail?: self = .sets
+        case .stats?, .statsCharts?: self = .stats
+        default: self = .tonight
+        }
+    }
 }
 
 @MainActor
 struct MainTabView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @State private var selection: MainTab = .tonight
+    @State private var selection = MainTab(launch: LaunchOptions.current.screen)
 
     var body: some View {
         TabView(selection: $selection) {

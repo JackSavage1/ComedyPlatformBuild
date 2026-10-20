@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Shown when the build has no Supabase URL / key (spec 2): explains the
-/// Secrets.xcconfig file to create. CI builds always land here.
+/// Secrets.xcconfig file to create. CI builds always land here. "Try the
+/// demo" (spec 8.1) opens the app with sample data instead.
 @MainActor
 struct NotConfiguredView: View {
     let config: AppConfig
@@ -29,6 +30,13 @@ struct NotConfiguredView: View {
 
                 Text("This build doesn't know which Supabase project to talk to. Create the secrets file, then build and run again.")
                     .font(.body)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Just looking around? The demo uses sample data and needs no setup.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    TryDemoButton()
+                }
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("1. Copy ios/Config/Secrets.example.xcconfig to ios/Config/Secrets.xcconfig")
@@ -70,5 +78,26 @@ struct NotConfiguredView: View {
             }
             .padding(24)
         }
+    }
+}
+
+/// "Try the demo" (spec 8.1): a full-width secondary button that switches
+/// the app to the bundled sample data. Used by Sign in and Not configured.
+@MainActor
+struct TryDemoButton: View {
+    @Environment(AppStore.self) private var store
+
+    init() {}
+
+    var body: some View {
+        Button {
+            store.enterDemo()
+        } label: {
+            Label("Try the demo", systemImage: "play.circle")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+        }
+        .buttonStyle(.bordered)
     }
 }

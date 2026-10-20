@@ -4,11 +4,14 @@ import Observation
 // =============================================================================
 // AppStore — the app's single source of truth.
 //
-// It holds everything loaded from Supabase (mics, sets, plans, the scraper
-// queue) and owns every write the app can make (spec 3.3–3.4). Screens read
-// it with `@Environment(AppStore.self) private var store` and call its
-// methods; because the class is `@Observable`, SwiftUI re-renders exactly
-// the views that read a property when that property changes.
+// It holds everything loaded from the backend (mics, sets, plans, the
+// scraper queue) and owns every write the app can make (spec 3.3–3.4).
+// Screens read it with `@Environment(AppStore.self) private var store` and
+// call its methods; because the class is `@Observable`, SwiftUI re-renders
+// exactly the views that read a property when that property changes.
+//
+// The data itself comes from a `DataBackend`: Supabase normally, or the
+// in-memory demo after "Try the demo" (spec 8). Screens never see which.
 //
 // Conventions for screens:
 //   * Mutations are `async`, return `true` / a value on success, and on
@@ -45,6 +48,11 @@ final class AppStore {
     let auth: AuthService
     let api: APIClient
     let geocoder: GeocodingService
+    /// Where data is read from and written to (Supabase, or the demo).
+    @ObservationIgnored private var backend: DataBackend
+
+    /// True while the app shows the bundled demo data (spec 8).
+    private(set) var isDemoMode = false
 
     // MARK: - Data
 
@@ -93,7 +101,9 @@ final class AppStore {
         self.config = config
         let authService = AuthService(config: config)
         self.auth = authService
-        self.api = APIClient(config: config, auth: authService)
+        let client = APIClient(config: config, auth: authService)
+        self.api = client
+        self.backend = SupabaseBackend(api: client)
         self.geocoder = GeocodingService()
     }
 
@@ -113,6 +123,10 @@ final class AppStore {
     }
 
     func signOut() async {
+        if isDemoMode {
+            exitDemo()
+            return
+        }
         await auth.signOut()
         clearData()
     }
@@ -121,6 +135,34 @@ final class AppStore {
     func checkAdmin() async {
         await auth.checkAccess()
     }
+
+    // MARK: - Demo mode (spec 8.1)
+
+    /// "Try the demo": switch to the bundled sample data. Nothing is saved —
+    /// every change lives in memory until the app quits or the demo ends.
+    /// RootView then shows the tabs, whatever the sign-in state is.
+    func enterDemo() {
+        clearData()
+        do {
+            backend = try DemoBackend.bundled(today: CalendarDate.today())
+        } catch {
+            // Still open the (empty) demo, and say why it's empty.
+            backend = DemoBackend(tables: DemoTables())
+            errorMessage = APIError.describe(error)
+        }
+        isDemoMode = true
+    }
+
+    /// Manage → Account → "Exit demo": forget the demo data and go back to
+    /// the normal sign-in gate.
+    func exitDemo() {
+        clearData()
+        backend = SupabaseBackend(api: api)
+        isDemoMode = false
+    }
+
+    /// Loading only makes sense with a configured Supabase project or in the demo.
+    private var canLoad: Bool { isDemoMode || config.isConfigured }
 
     // MARK: - Lookups
 
@@ -184,15 +226,16 @@ final class AppStore {
     /// Loads mics, sets and the default plans window (last week … 3 weeks
     /// out, the Calendar's range). Call on appear and on pull-to-refresh.
     func refreshAll() async {
-        guard config.isConfigured else { return }
+        guard canLoad else { return }
         isLoading = true
         defer { isLoading = false }
 
         let window = AppStore.defaultPlanWindow(today: CalendarDate.today())
+        let source = backend
         do {
-            async let micsRequest: [Mic] = fetchMics()
-            async let setsRequest: [SetEntry] = fetchSets()
-            async let plansRequest: [MicPlan] = fetchPlans(from: window.start, through: window.end)
+            async let micsRequest: [Mic] = source.fetchMics()
+            async let setsRequest: [SetEntry] = source.fetchSets()
+            async let plansRequest: [MicPlan] = source.fetchPlans(from: window.start, through: window.end)
             let (newMics, newSets, newPlans) = try await (micsRequest, setsRequest, plansRequest)
 
             apply(mics: newMics)
@@ -208,7 +251,7 @@ final class AppStore {
     /// Loads (and merges in) the plans for `start...end`.
     func loadPlans(from start: CalendarDate, to end: CalendarDate) async {
         do {
-            let fetched = try await fetchPlans(from: start, through: end)
+            let fetched = try await backend.fetchPlans(from: start, through: end)
             replacePlans(fetched, from: start, through: end)
         } catch {
             report(error)
@@ -225,17 +268,11 @@ final class AppStore {
 
     /// Pending scraper listings, grouped-friendly order (source, day, name).
     func loadScraped() async {
-        guard config.isConfigured else { return }
+        guard canLoad else { return }
         isLoadingScraped = true
         defer { isLoadingScraped = false }
         do {
-            let rows: [ScrapedMic] = try await api.select(
-                "scraped_mics",
-                query: [
-                    URLQueryItem(name: "status", value: "eq.pending"),
-                    URLQueryItem(name: "order", value: "source.asc,name.asc"),
-                ]
-            )
+            let rows = try await backend.fetchPendingScraped()
             scrapedMics = rows.sorted { lhs, rhs in
                 if lhs.source != rhs.source { return lhs.source < rhs.source }
                 let leftDay = lhs.weekday?.rawValue ?? 8
@@ -250,17 +287,11 @@ final class AppStore {
 
     /// Scraper run history (`scrape_log`), newest first.
     func loadScrapeLog() async {
-        guard config.isConfigured else { return }
+        guard canLoad else { return }
         isLoadingScrapeLog = true
         defer { isLoadingScrapeLog = false }
         do {
-            scrapeLog = try await api.select(
-                "scrape_log",
-                query: [
-                    URLQueryItem(name: "order", value: "last_scraped.desc.nullslast,id.desc"),
-                    URLQueryItem(name: "limit", value: "200"),
-                ]
-            )
+            scrapeLog = try await backend.fetchScrapeLog()
         } catch {
             report(error)
         }
@@ -273,10 +304,7 @@ final class AppStore {
     @discardableResult
     func setPlanStatus(micID: Int, date: CalendarDate, status: PlanStatus) async -> Bool {
         let ok = await perform {
-            try await api.rpcVoid(
-                "set_plan_status",
-                args: PlanStatusArgs(micID: micID, planDate: date.isoString, status: status.rawValue)
-            )
+            try await backend.setPlanStatus(micID: micID, date: date, status: status)
         }
         guard ok else { return false }
         await reloadPlans(on: date)
@@ -290,7 +318,7 @@ final class AppStore {
     @discardableResult
     func clearPlan(micID: Int, date: CalendarDate) async -> Bool {
         let ok = await perform {
-            try await api.rpcVoid("clear_plan", args: PlanArgs(micID: micID, planDate: date.isoString))
+            try await backend.clearPlan(micID: micID, date: date)
         }
         guard ok else { return false }
         await reloadPlans(on: date)
@@ -311,8 +339,7 @@ final class AppStore {
         }
         // Outer optional: did the request succeed? Inner: did it return a row?
         let created: Mic?? = await performReturning { () async throws -> Mic? in
-            let rows: [Mic] = try await self.api.insert("open_mics", body: MicInsertPayload(fields: fields))
-            return rows.first
+            try await self.backend.insertMic(fields)
         }
         guard let result = created else { return nil }
         await reloadMics()
@@ -329,11 +356,7 @@ final class AppStore {
             return false
         }
         let ok = await perform {
-            let rows: [Mic] = try await api.update(
-                "open_mics", id: id,
-                body: MicUpdatePayload(fields: fields, includeCoordinates: includeCoordinates)
-            )
-            if rows.isEmpty { throw AppStore.nothingSavedError }
+            try await backend.updateMic(id: id, fields: fields, includeCoordinates: includeCoordinates)
         }
         guard ok else { return false }
         await reloadMics()
@@ -344,8 +367,7 @@ final class AppStore {
     @discardableResult
     func updateMicRating(micID: Int, rating: Double?) async -> Bool {
         let ok = await perform {
-            let rows: [Mic] = try await api.update("open_mics", id: micID, body: MicRatingPayload(micRating: rating))
-            if rows.isEmpty { throw AppStore.nothingSavedError }
+            try await backend.updateMicRating(id: micID, rating: rating)
         }
         guard ok else { return false }
         await reloadMics()
@@ -356,7 +378,7 @@ final class AppStore {
     @discardableResult
     func deleteMic(micID: Int) async -> Bool {
         let ok = await perform {
-            try await api.rpcVoid("delete_mic", args: MicIDArgs(micID: micID))
+            try await backend.deleteMic(id: micID)
         }
         guard ok else { return false }
         plans.removeAll { $0.openMicId == micID }
@@ -369,11 +391,7 @@ final class AppStore {
     @discardableResult
     func updateCoordinates(micID: Int, latitude: Double?, longitude: Double?, reload: Bool = true) async -> Bool {
         let ok = await perform {
-            let rows: [Mic] = try await api.update(
-                "open_mics", id: micID,
-                body: CoordinatesPayload(latitude: latitude, longitude: longitude)
-            )
-            if rows.isEmpty { throw AppStore.nothingSavedError }
+            try await backend.updateCoordinates(id: micID, latitude: latitude, longitude: longitude)
         }
         if ok && reload {
             await reloadMics()
@@ -427,7 +445,7 @@ final class AppStore {
     @discardableResult
     func logSet(_ fields: SetFields) async -> Bool {
         let ok = await perform {
-            let _: [SetEntry] = try await api.insert("my_sets", body: SetInsertPayload(fields: fields))
+            try await backend.insertSet(fields)
         }
         guard ok else { return false }
         await reloadSets()
@@ -438,8 +456,7 @@ final class AppStore {
     @discardableResult
     func updateSet(id: Int, fields: SetFields) async -> Bool {
         let ok = await perform {
-            let rows: [SetEntry] = try await api.update("my_sets", id: id, body: SetUpdatePayload(fields: fields))
-            if rows.isEmpty { throw AppStore.nothingSavedError }
+            try await backend.updateSet(id: id, fields: fields)
         }
         guard ok else { return false }
         await reloadSets()
@@ -450,7 +467,7 @@ final class AppStore {
     @discardableResult
     func deleteSet(id: Int) async -> Bool {
         let ok = await perform {
-            try await api.delete("my_sets", id: id)
+            try await backend.deleteSet(id: id)
         }
         guard ok else { return false }
         await reloadSets()
@@ -464,7 +481,7 @@ final class AppStore {
     func deletePlannedSet(id: Int) async -> Bool {
         let date = sets.first { $0.id == id }?.datePerformed
         let deleted: Bool? = await performReturning {
-            try await api.rpcBool("delete_planned_set", args: SetIDArgs(setID: id))
+            try await backend.deletePlannedSet(id: id)
         }
         guard let didDelete = deleted else { return false }
         await reloadSets()
@@ -480,7 +497,7 @@ final class AppStore {
     @discardableResult
     func importScraped(id: Int) async -> Int? {
         let newID: Int? = await performReturning {
-            try await api.rpcInt("import_scraped_mic", args: ScrapedIDArgs(id: id))
+            try await backend.importScraped(id: id)
         }
         guard newID != nil else { return nil }
         scrapedMics.removeAll { $0.id == id }
@@ -502,7 +519,7 @@ final class AppStore {
         for listing in batch {
             if Task.isCancelled { break }
             do {
-                _ = try await api.rpcInt("import_scraped_mic", args: ScrapedIDArgs(id: listing.id))
+                _ = try await backend.importScraped(id: listing.id)
                 added += 1
                 scrapedMics.removeAll { $0.id == listing.id }
             } catch {
@@ -524,7 +541,7 @@ final class AppStore {
     @discardableResult
     func dismissScraped(id: Int) async -> Bool {
         let ok = await perform {
-            try await api.rpcVoid("dismiss_scraped_mic", args: ScrapedIDArgs(id: id))
+            try await backend.dismissScraped(id: id)
         }
         if ok {
             scrapedMics.removeAll { $0.id == id }
@@ -560,30 +577,11 @@ final class AppStore {
         errorMessage = nil
     }
 
-    // MARK: - Private: fetching
-
-    private func fetchMics() async throws -> [Mic] {
-        try await api.select("open_mics", query: [URLQueryItem(name: "order", value: "id.asc")])
-    }
-
-    private func fetchSets() async throws -> [SetEntry] {
-        try await api.select("my_sets", query: [URLQueryItem(name: "order", value: "date_performed.desc,id.desc")])
-    }
-
-    private func fetchPlans(from start: CalendarDate, through end: CalendarDate) async throws -> [MicPlan] {
-        try await api.select(
-            "mic_plans",
-            query: [
-                URLQueryItem(name: "plan_date", value: "gte.\(start.isoString)"),
-                URLQueryItem(name: "plan_date", value: "lte.\(end.isoString)"),
-                URLQueryItem(name: "order", value: "plan_date.asc,id.asc"),
-            ]
-        )
-    }
+    // MARK: - Private: reloading after writes
 
     private func reloadMics() async {
         do {
-            apply(mics: try await fetchMics())
+            apply(mics: try await backend.fetchMics())
         } catch {
             report(error)
         }
@@ -591,7 +589,7 @@ final class AppStore {
 
     private func reloadSets() async {
         do {
-            apply(sets: try await fetchSets())
+            apply(sets: try await backend.fetchSets())
         } catch {
             report(error)
         }
@@ -632,10 +630,6 @@ final class AppStore {
 
     // MARK: - Private: write helpers
 
-    private static let nothingSavedError = APIError.unexpected(
-        "Nothing was saved — the row wasn't found or this account can't edit it."
-    )
-
     /// Runs a write, tracking `busyCount` and reporting failures.
     private func perform(_ operation: () async throws -> Void) async -> Bool {
         busyCount += 1
@@ -659,53 +653,5 @@ final class AppStore {
             report(error)
             return nil
         }
-    }
-}
-
-// MARK: - RPC argument bodies (names must match the SQL exactly — spec 3.4)
-
-private struct PlanStatusArgs: Encodable {
-    let micID: Int
-    let planDate: String
-    let status: String
-
-    enum CodingKeys: String, CodingKey {
-        case micID = "p_mic_id"
-        case planDate = "p_plan_date"
-        case status = "p_status"
-    }
-}
-
-private struct PlanArgs: Encodable {
-    let micID: Int
-    let planDate: String
-
-    enum CodingKeys: String, CodingKey {
-        case micID = "p_mic_id"
-        case planDate = "p_plan_date"
-    }
-}
-
-private struct MicIDArgs: Encodable {
-    let micID: Int
-
-    enum CodingKeys: String, CodingKey {
-        case micID = "p_mic_id"
-    }
-}
-
-private struct SetIDArgs: Encodable {
-    let setID: Int
-
-    enum CodingKeys: String, CodingKey {
-        case setID = "p_set_id"
-    }
-}
-
-private struct ScrapedIDArgs: Encodable {
-    let id: Int
-
-    enum CodingKeys: String, CodingKey {
-        case id = "p_id"
     }
 }

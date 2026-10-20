@@ -32,14 +32,23 @@ struct ManageToolbarButton: View {
 }
 
 /// The sheet's content: ManageView in a NavigationStack with a Done button.
+/// `initialRoutes` pushes Import / Add a Mic right away (only the CI
+/// screenshot launch hooks use it — see LaunchOptions).
 @MainActor
-private struct ManageSheet: View {
+struct ManageSheet: View {
     let store: AppStore
     @Environment(\.dismiss) private var dismiss
+    @State private var path: NavigationPath
+
+    init(store: AppStore, initialRoutes: [LaunchRoute] = []) {
+        self.store = store
+        _path = State(initialValue: NavigationPath(initialRoutes))
+    }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ManageView()
+                .launchRouteDestinations()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Done") { dismiss() }
