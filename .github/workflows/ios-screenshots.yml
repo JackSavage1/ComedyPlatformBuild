@@ -214,8 +214,26 @@ jobs:
           mkdir -p "$SHOTS_DIR"
           rm -f "$SHOTS_DIR"/*.png
 
+          # Run a command, but kill it after N seconds. simctl calls can hang
+          # forever on a busy runner, which would stall the job for an hour.
+          # (macOS has no `timeout` command, so this is the portable version.)
+          with_timeout() {
+            local secs=$1; shift
+            "$@" &
+            local pid=$!
+            ( sleep "$secs"; kill -9 "$pid" 2>/dev/null ) &
+            local watcher=$!
+            local rc=0
+            wait "$pid" || rc=$?
+            kill "$watcher" 2>/dev/null || true
+            wait "$watcher" 2>/dev/null || true
+            if [ "$rc" -eq 137 ]; then echo "::warning::Timed out after ${secs}s: $*"; fi
+            return "$rc"
+          }
+
           # Warm-up: the first launch after install (and after boot) is slow.
-          xcrun simctl launch "$UDID" "$BUNDLE_ID" -demo YES
+          echo "▶ warm-up launch"
+          with_timeout 90 xcrun simctl launch "$UDID" "$BUNDLE_ID" -demo YES || echo "::warning::Warm-up launch failed"
           sleep 15
           # Re-apply in case SpringBoard reset it while finishing the boot.
           xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3 \
@@ -233,16 +251,18 @@ jobs:
             # Map tiles need time to download; everything else is local.
             if [ "$screen" = "map" ]; then settle=10; else settle=4; fi
 
-            xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+            with_timeout 30 xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
             sleep 1
             echo "▶ $screen: ${args[*]}"
-            xcrun simctl launch "$UDID" "$BUNDLE_ID" "${args[@]}"
+            with_timeout 60 xcrun simctl launch "$UDID" "$BUNDLE_ID" "${args[@]}" \
+              || echo "::warning::Launch failed or timed out for '$screen'"
             sleep "$settle"
-            running=$(xcrun simctl spawn "$UDID" launchctl list 2>/dev/null || true)
+            running=$(with_timeout 20 xcrun simctl spawn "$UDID" launchctl list 2>/dev/null || true)
             if ! grep -q "$BUNDLE_ID" <<<"$running"; then
               echo "::warning::Mic Tracker doesn't seem to be running for '$screen' (crash?)"
             fi
-            xcrun simctl io "$UDID" screenshot "$file"
+            with_timeout 45 xcrun simctl io "$UDID" screenshot "$file" \
+              || echo "::warning::Screenshot failed or timed out for '$screen'"
           done
           xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 
