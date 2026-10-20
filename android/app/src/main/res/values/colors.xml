@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Streamlit's primary red — the app's accent color (spec section 1). -->
+    <color name="accent_red">#FFFF4B4B</color>
+    <color name="ic_launcher_background">#FFFF4B4B</color>
+    <color name="ic_launcher_foreground">#FFFFFFFF</color>
+    <!-- Window background shown for a split second before Compose draws. -->
+    <color name="window_background_light">#FFFFFBFF</color>
+    <color name="window_background_dark">#FF0E1117</color>
+</resources>

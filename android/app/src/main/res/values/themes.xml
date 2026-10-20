@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        The Activity theme. All real styling happens in Compose
+        (ui/theme/Theme.kt); this only sets the window background and
+        status-bar look that appear before the first frame.
+        Uses a framework theme so we don't need the AppCompat library.
+    -->
+    <style name="Theme.MicTracker" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background_light</item>
+        <item name="android:colorAccent">@color/accent_red</item>
+    </style>
+</resources>

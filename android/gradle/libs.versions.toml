@@ -1,0 +1,70 @@
+# =============================================================================
+# Version catalog — every library and plugin version in ONE place.
+#
+# Modules refer to these as `libs.<alias>` (dashes become dots), e.g.
+# `libs.okhttp` or `libs.plugins.kotlin.android`.
+#
+# The versions are deliberately established stable releases (not the newest)
+# that are known to work together:
+#   Gradle 8.14.3 (wrapper) · AGP 8.7.3 · Kotlin 2.1.21 · compileSdk 35
+# The Compose compiler ships with Kotlin 2.x (the kotlin-compose plugin), so it
+# always matches the Kotlin version automatically.
+# =============================================================================
+
+[versions]
+agp = "8.7.3"
+kotlin = "2.1.21"
+
+coreKtx = "1.15.0"
+activityCompose = "1.9.3"
+composeBom = "2024.12.01"
+lifecycle = "2.8.7"
+navigationCompose = "2.8.5"
+
+kotlinxSerialization = "1.8.1"
+kotlinxCoroutines = "1.10.2"
+okhttp = "4.12.0"
+maplibre = "11.8.8"
+
+junit = "4.13.2"
+
+[libraries]
+# AndroidX basics
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
+
+# Jetpack Compose — versions come from the BOM ("bill of materials")
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+
+# Kotlin libraries
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
+
+# Networking
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
+
+# Maps (MapLibre Native — open source, no API key)
+maplibre-android = { group = "org.maplibre.gl", name = "android-sdk", version.ref = "maplibre" }
+
+# Testing
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

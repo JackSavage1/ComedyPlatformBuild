@@ -1,0 +1,69 @@
+# Android CI: unit tests + a debug APK for the native app in android/.
+#
+# Runs on every push that touches android/ (or this file), and on demand
+# from the Actions tab. No secrets needed: without android/secrets.properties
+# the app still builds — it just shows its "Not configured" screen.
+#
+# The debug APK is uploaded as an artifact ("mic-tracker-debug-apk") that you
+# can download from the run page and install on a phone or emulator.
+
+name: Android
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the older, still-running build.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      # The Android Gradle plugin needs JDK 17+. (The Android SDK itself is
+      # preinstalled on GitHub's Ubuntu runners.)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Caches Gradle downloads between runs and validates the wrapper jar.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Test and build
+        run: ./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mic-tracker-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload test reports (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports
+          path: |
+            android/core/build/reports/tests/
+            android/app/build/reports/tests/
+          if-no-files-found: ignore
