@@ -1,0 +1,15 @@
+// =============================================================================
+// Base.xcconfig — committed build settings for the MicTracker app target.
+//
+// The two Supabase values default to EMPTY so the app always builds (CI has
+// no secrets); the app then shows its "Not configured" screen.
+//
+// Your real values go in Secrets.xcconfig (same folder, gitignored), which
+// the optional include below pulls in and which overrides these defaults.
+// Template: Secrets.example.xcconfig. Full steps: docs/MOBILE_SETUP.md.
+// =============================================================================
+
+SUPABASE_URL =
+SUPABASE_ANON_KEY =
+
+#include? "Secrets.xcconfig"

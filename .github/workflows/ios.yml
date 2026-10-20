@@ -1,0 +1,187 @@
+# =============================================================================
+# iOS CI — generates the Xcode project with XcodeGen, builds the app for the
+# iOS Simulator, then runs the unit tests on an available iPhone simulator.
+#
+# No Supabase secrets are needed: without ios/Config/Secrets.xcconfig the
+# Supabase settings are empty and the app shows its "Not configured" screen.
+# Code signing is turned off (simulator builds don't need it).
+# =============================================================================
+name: iOS
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & unit test (Simulator)
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    defaults:
+      run:
+        working-directory: ios
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # Prefer the newest Xcode 16.x on the image (Swift 6.0/6.1 in Swift 5
+      # mode — what this code is written against). If the image has none,
+      # keep its default Xcode.
+      - name: Select Xcode
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -n "$XCODE_APP" ]; then
+            echo "Selecting $XCODE_APP"
+            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          else
+            echo "No Xcode 16.x found; using the default Xcode"
+          fi
+
+      - name: Show toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+          xcrun simctl list runtimes
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # -quiet prints only warnings and errors, so a compile failure is easy
+      # to find in the log.
+      - name: Build app (generic iOS Simulator)
+        run: |
+          xcodebuild build \
+            -quiet \
+            -project MicTracker.xcodeproj \
+            -scheme MicTracker \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
+      # Ask xcodebuild which simulators it can actually run with the
+      # selected Xcode, and take an iPhone on the newest iOS (17+). Falls
+      # back to `simctl` if that list can't be read.
+      - name: Pick an iPhone simulator
+        id: simulator
+        run: |
+          cat > "$RUNNER_TEMP/pick_simulator.py" <<'PY'
+          import json
+          import re
+          import subprocess
+          import sys
+
+
+          def version_tuple(text):
+              try:
+                  return tuple(int(part) for part in text.split("."))
+              except ValueError:
+                  return None
+
+
+          def from_showdestinations(path):
+              """Lines look like:
+              { platform:iOS Simulator, arch:arm64, id:ABC-123, OS:18.5, name:iPhone 16 }
+              Only the "Available destinations" section counts."""
+              best = None
+              in_available = False
+              with open(path, encoding="utf-8", errors="replace") as handle:
+                  for line in handle:
+                      if "Available destinations" in line:
+                          in_available = True
+                          continue
+                      if "Ineligible destinations" in line:
+                          in_available = False
+                          continue
+                      if not in_available:
+                          continue
+                      match = re.search(r"\{(.*)\}", line)
+                      if not match:
+                          continue
+                      fields = {}
+                      for part in match.group(1).split(", "):
+                          if ":" in part:
+                              key, value = part.split(":", 1)
+                              fields[key.strip()] = value.strip()
+                      if fields.get("platform") != "iOS Simulator":
+                          continue
+                      name = fields.get("name", "")
+                      version = version_tuple(fields.get("OS", ""))
+                      if not name.startswith("iPhone") or version is None or version < (17, 0):
+                          continue
+                      if best is None or version > best[0]:
+                          best = (version, fields["id"], name)
+              return best
+
+
+          def from_simctl():
+              output = subprocess.run(
+                  ["xcrun", "simctl", "list", "devices", "available", "-j"],
+                  check=True, capture_output=True, text=True,
+              ).stdout
+              best = None
+              for runtime, devices in json.loads(output).get("devices", {}).items():
+                  match = re.search(r"iOS-(\d+)-(\d+)", runtime)
+                  if not match:
+                      continue
+                  version = (int(match.group(1)), int(match.group(2)))
+                  if version < (17, 0):
+                      continue
+                  for device in devices:
+                      name = device.get("name", "")
+                      if name.startswith("iPhone") and device.get("isAvailable", True):
+                          if best is None or version > best[0]:
+                              best = (version, device["udid"], name)
+                          break
+              return best
+
+
+          best = from_showdestinations(sys.argv[1]) or from_simctl()
+          if best is None:
+              sys.exit("No available iPhone simulator with iOS 17+ found")
+          print("Using %s (iOS %s)" % (best[2], ".".join(str(n) for n in best[0])), file=sys.stderr)
+          print(best[1])
+          PY
+          xcodebuild -project MicTracker.xcodeproj -scheme MicTracker -showdestinations \
+            > "$RUNNER_TEMP/destinations.txt" 2>&1 || true
+          cat "$RUNNER_TEMP/destinations.txt"
+          UDID=$(python3 "$RUNNER_TEMP/pick_simulator.py" "$RUNNER_TEMP/destinations.txt")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit tests
+        run: |
+          xcodebuild test \
+            -project MicTracker.xcodeproj \
+            -scheme MicTracker \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build/DerivedData \
+            -resultBundlePath build/TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: ios/build/TestResults.xcresult
+          if-no-files-found: ignore
