@@ -48,7 +48,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # Optional repository secrets. When set, the downloadable APK signs in to
+      # the real Supabase project; when missing they are empty and the app
+      # opens on "Not configured" (demo mode still works).
       - name: Test and build
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: ./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest --stacktrace
 
       - name: Upload debug APK

@@ -13,6 +13,10 @@ name: Android screenshots
 
 on:
   workflow_dispatch:
+  # GitHub only lists a dispatch-only workflow once it is on the default
+  # branch, so a push whose commit message contains [screenshots] also
+  # starts it (see the job's `if:`). Other pushes skip the job.
+  push:
 
 permissions:
   contents: write # to push the screenshots back
@@ -24,6 +28,7 @@ concurrency:
 
 jobs:
   screenshots:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screenshots]')
     runs-on: ubuntu-latest
     timeout-minutes: 60
 

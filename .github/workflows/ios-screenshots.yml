@@ -14,6 +14,10 @@ name: iOS screenshots
 
 on:
   workflow_dispatch:
+  # GitHub only lists a dispatch-only workflow once it is on the default
+  # branch, so a push whose commit message contains [screenshots] also
+  # starts it (see the job's `if:`). Other pushes skip the job.
+  push:
 
 permissions:
   contents: write
@@ -25,6 +29,7 @@ concurrency:
 jobs:
   screenshots:
     name: Capture simulator screenshots
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screenshots]')
     runs-on: macos-15
     timeout-minutes: 60
     env:
