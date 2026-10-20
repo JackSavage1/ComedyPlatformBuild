@@ -28,6 +28,8 @@ import com.comedyplatform.mictracker.ui.components.EmptyState
 import com.comedyplatform.mictracker.ui.components.ErrorBanner
 import com.comedyplatform.mictracker.ui.components.LoadingBox
 import com.comedyplatform.mictracker.ui.components.RefreshableBox
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 
 /**
  * My Sets (spec 6.6) — a port of the web app's My Sets page, with two tabs:
@@ -36,16 +38,31 @@ import com.comedyplatform.mictracker.ui.components.RefreshableBox
  *   History     summary numbers, filters, and every set (tap for details)
  *
  * All data comes from the shared MicRepository via [SetsViewModel].
+ *
+ * @param startOnHistory open on the History tab (CI's `sets-history` /
+ *   `set-detail` screenshots, spec 8.3)
+ * @param openLatestSet also open Set Detail of the most recent logged set
+ *   once the sets have loaded (`set-detail`)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SetsScreen() {
+fun SetsScreen(startOnHistory: Boolean = false, openLatestSet: Boolean = false) {
     val viewModel = appViewModel { container ->
         SetsViewModel(repository = container.micRepository, today = { container.today() })
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
+
+    // Initial state for CI screenshots (spec 8.3); both flags are false on a normal launch.
+    LaunchedEffect(Unit) {
+        if (startOnHistory) viewModel.selectTab(SetsTab.HISTORY)
+        if (openLatestSet) {
+            // Sets are newest first, so the first logged one is the most recent.
+            val latest = viewModel.state.mapNotNull { s -> s.allSets.firstOrNull { it.set.isLogged } }.first()
+            viewModel.openHistoryRow(latest)
+        }
+    }
 
     // One-off messages ("✅ Set logged! Keep grinding! 🎤"), with a little
     // buzz when a set was logged — the phone's version of st.balloons().

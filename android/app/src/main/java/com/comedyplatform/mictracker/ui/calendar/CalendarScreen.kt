@@ -53,16 +53,23 @@ import java.time.LocalDate
  *   - the filter button (with a badge counting active filters) opens a sheet
  *   - each card: tap → Mic Detail for that date; swipe right = Going,
  *     swipe left = Cancelled; long-press for the same actions + Clear
+ *
+ * @param initialFiltersOpen start with the filter sheet showing (CI's
+ *   `calendar-filters` screenshot, spec 8.3)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CalendarScreen(onOpenMic: (micId: Int, date: LocalDate?) -> Unit, onOpenManage: () -> Unit) {
+fun CalendarScreen(
+    onOpenMic: (micId: Int, date: LocalDate?) -> Unit,
+    onOpenManage: () -> Unit,
+    initialFiltersOpen: Boolean = false,
+) {
     val viewModel = appViewModel { container ->
         CalendarViewModel(repository = container.micRepository, today = { container.today() })
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    var showFilters by rememberSaveable { mutableStateOf(false) }
+    var showFilters by rememberSaveable { mutableStateOf(initialFiltersOpen) }
 
     // The app may have been open since yesterday.
     LaunchedEffect(Unit) { viewModel.syncToday() }

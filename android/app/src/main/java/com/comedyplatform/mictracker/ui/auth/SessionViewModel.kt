@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 /**
  * What the app shows before the tabs (spec section 5):
  * Not configured → Sign in → (checking) → Not authorized → tabs.
+ * Demo mode (spec 8.1) skips all of that and goes straight to the tabs.
  */
 sealed interface GateState {
     /** SUPABASE_URL / SUPABASE_ANON_KEY missing from the build. */
@@ -39,6 +40,9 @@ sealed interface GateState {
 
     /** Signed in as an app admin — show the tabs. */
     data class Authorized(val email: String?) : GateState
+
+    /** Demo mode: the tabs, on the in-memory demo data (no account needed). */
+    data object Demo : GateState
 }
 
 /**
@@ -61,9 +65,13 @@ class SessionViewModel(private val container: AppContainer) : ViewModel() {
 
     private val adminCheck = MutableStateFlow<AdminCheck>(AdminCheck.Pending)
 
-    val state: StateFlow<GateState> = combine(auth.session, adminCheck) { session, check ->
-        gateFor(session, check)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, gateFor(auth.session.value, adminCheck.value))
+    val state: StateFlow<GateState> = combine(auth.session, adminCheck, container.isDemo) { session, check, demo ->
+        if (demo) GateState.Demo else gateFor(session, check)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        if (container.isDemo.value) GateState.Demo else gateFor(auth.session.value, adminCheck.value),
+    )
 
     // ---- Sign-in form state -------------------------------------------------
 
@@ -82,7 +90,9 @@ class SessionViewModel(private val container: AppContainer) : ViewModel() {
                 .collect { identity ->
                     if (identity == null) {
                         adminCheck.value = AdminCheck.Pending
-                        container.micRepository.clear()
+                        // In demo mode the repository holds demo data, which a
+                        // signed-out session has nothing to do with — keep it.
+                        if (!container.isDemo.value) container.micRepository.clear()
                     } else {
                         checkAdmin()
                     }
@@ -124,6 +134,12 @@ class SessionViewModel(private val container: AppContainer) : ViewModel() {
 
     fun clearSignInError() {
         _signInError.value = null
+    }
+
+    /** "Try the demo" (Sign in / Not configured screens): straight to the tabs with sample data. */
+    fun enterDemo() {
+        _signInError.value = null
+        container.enterDemo()
     }
 
     private suspend fun checkAdmin() {

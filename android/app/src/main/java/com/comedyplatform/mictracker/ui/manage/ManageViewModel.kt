@@ -47,11 +47,16 @@ data class GeocodeProgress(
 /** "Add all" progress for one source. */
 data class AddAllProgress(val sourceKey: String, val done: Int, val total: Int)
 
+/** Who's using the app, for the Account section: the signed-in email, or demo mode (spec 8.1). */
+data class ManageAccount(val email: String?, val isDemo: Boolean)
+
 /** A one-off snackbar message; [id] makes repeated identical messages show again. */
 data class ManageMessage(val text: String, val id: Long = System.nanoTime())
 
 data class ManageUiState(
     val email: String? = null,
+    /** Demo mode: Account shows "Demo mode" and Exit demo instead of Sign out. */
+    val isDemo: Boolean = false,
     val activeMics: List<Mic> = emptyList(),
     // ---- Import --------------------------------------------------------------
     val scrapedGroups: List<ManageRules.SourceGroup> = emptyList(),
@@ -93,15 +98,18 @@ data class ManageUiState(
  * State and actions for Manage (spec 6.8): the scraper review queue, scrape
  * history, the searchable mic list, device geocoding and sign-out.
  *
- * @param email the signed-in account's email (from the auth session)
+ * @param account the signed-in account's email (from the auth session) and
+ *   whether demo mode is on
  * @param performSignOut signs out; runs in the app-wide scope so it finishes even
  *   though this screen disappears as soon as the session is cleared
+ * @param performExitDemo leaves demo mode (the gate then replaces this screen)
  */
 class ManageViewModel(
     private val repository: MicRepository,
     private val geocoder: GeocodingService,
-    email: Flow<String?>,
+    account: Flow<ManageAccount>,
     private val performSignOut: () -> Unit,
+    private val performExitDemo: () -> Unit,
 ) : ViewModel() {
 
     /** Things only this screen knows about. */
@@ -126,12 +134,13 @@ class ManageViewModel(
         repository.activeMics,
         repository.scraped,
         repository.scrapeLog,
-        email,
+        account,
         local,
-    ) { activeMics, scraped, scrapeLog, accountEmail, ui ->
+    ) { activeMics, scraped, scrapeLog, who, ui ->
         val missing = ManageRules.missingCoordinates(activeMics)
         ManageUiState(
-            email = accountEmail,
+            email = who.email,
+            isDemo = who.isDemo,
             activeMics = activeMics,
             scrapedGroups = ManageRules.groupBySource(scraped),
             scrapedCount = scraped.size,
@@ -360,5 +369,11 @@ class ManageViewModel(
         geocodeJob?.cancel()
         local.update { it.copy(isSigningOut = true) }
         performSignOut()
+    }
+
+    /** "Exit demo" (spec 8.1): back to the normal gate; the demo data is thrown away. */
+    fun exitDemo() {
+        geocodeJob?.cancel()
+        performExitDemo()
     }
 }

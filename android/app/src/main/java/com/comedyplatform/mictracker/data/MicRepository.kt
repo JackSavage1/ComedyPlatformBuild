@@ -1,20 +1,16 @@
 package com.comedyplatform.mictracker.data
 
-import com.comedyplatform.mictracker.core.json.CoreJson
-import com.comedyplatform.mictracker.core.json.JsonValues
 import com.comedyplatform.mictracker.core.model.Mic
 import com.comedyplatform.mictracker.core.model.MicDraft
 import com.comedyplatform.mictracker.core.model.MicPlan
 import com.comedyplatform.mictracker.core.model.Payloads
 import com.comedyplatform.mictracker.core.model.PlanKey
 import com.comedyplatform.mictracker.core.model.PlanStatus
-import com.comedyplatform.mictracker.core.model.Rpc
 import com.comedyplatform.mictracker.core.model.ScrapeLogEntry
 import com.comedyplatform.mictracker.core.model.ScrapedMic
 import com.comedyplatform.mictracker.core.model.SetDraft
 import com.comedyplatform.mictracker.core.model.SetEntry
 import com.comedyplatform.mictracker.core.model.SetWithMic
-import com.comedyplatform.mictracker.core.model.Tables
 import com.comedyplatform.mictracker.core.rules.DateRules
 import com.comedyplatform.mictracker.core.rules.MicRules
 import com.comedyplatform.mictracker.core.rules.SetRules
@@ -58,12 +54,35 @@ import java.time.LocalDate
  *     the server rejects the request or the network is down. After a
  *     successful change it refreshes the affected data; a failure of that
  *     follow-up refresh only sets [lastError] (the change itself succeeded).
+ *
+ * BACKENDS
+ *   The data itself comes from a [MicBackend]: Supabase normally, or the
+ *   in-memory demo data in demo mode (spec 8). [useBackend] swaps it; screens
+ *   don't notice, they just see the new data after the next refresh.
  */
 class MicRepository(
-    private val api: ApiClient,
+    backend: MicBackend,
     private val scope: CoroutineScope,
     private val today: () -> LocalDate = { LocalDate.now() },
 ) {
+
+    /** Talks to Supabase through [api] (the normal app, and the unit tests). */
+    constructor(
+        api: ApiClient,
+        scope: CoroutineScope,
+        today: () -> LocalDate = { LocalDate.now() },
+    ) : this(RemoteMicBackend(api), scope, today)
+
+    /** Where data is read from and written to right now. */
+    @Volatile
+    private var backend: MicBackend = backend
+
+    /**
+     * Bumped by [useBackend]; a refresh that started before the switch throws
+     * its (old backend's) results away instead of showing them.
+     */
+    @Volatile
+    private var generation = 0
 
     // ------------------------------------------------------------------
     // State
@@ -141,6 +160,16 @@ class MicRepository(
         _lastError.value = null
     }
 
+    /**
+     * Switches to [newBackend] (demo mode on/off) and forgets all loaded data.
+     * Call [refreshAll] afterwards to load from the new backend.
+     */
+    fun useBackend(newBackend: MicBackend) {
+        generation += 1
+        backend = newBackend
+        clear()
+    }
+
     /** Forget everything (called on sign-out). */
     fun clear() {
         _mics.value = emptyList()
@@ -166,24 +195,30 @@ class MicRepository(
      */
     suspend fun refreshAll(): Boolean = refreshMutex.withLock {
         _isRefreshing.value = true
+        val startedOn = generation
         try {
             val window = defaultPlanWindow()
-            coroutineScope {
+            val applied = coroutineScope {
                 val micsJob = async { fetchMics() }
                 val setsJob = async { fetchSets() }
                 val plansJob = async { fetchPlans(window.start, window.endInclusive) }
                 val mics = micsJob.await()
                 val sets = setsJob.await()
                 val plans = plansJob.await()
+                // The backend was switched while we were loading: these rows
+                // belong to the old one, so don't show them.
+                if (startedOn != generation) return@coroutineScope false
                 _mics.value = mics
                 _sets.value = sets
                 mergePlans(window.start, window.endInclusive, plans)
+                true
             }
+            if (!applied) return@withLock false
             _lastError.value = null
             _hasLoaded.value = true
             true
         } catch (e: ApiException) {
-            _lastError.value = e.userMessage
+            if (startedOn == generation) _lastError.value = e.userMessage
             false
         } finally {
             _isRefreshing.value = false
@@ -209,11 +244,7 @@ class MicRepository(
 
     /** Pending scraped mics, ordered by source, then Mon→Sun, then name. Throws [ApiException]. */
     suspend fun loadScraped() {
-        _scraped.value = api.selectList(
-            Tables.SCRAPED_MICS,
-            ScrapedMic.serializer(),
-            listOf("status" to "eq.pending", "order" to "source.asc,id.asc"),
-        ).sortedWith(
+        _scraped.value = backend.fetchPendingScraped().sortedWith(
             compareBy<ScrapedMic>(
                 { it.source ?: "" },
                 { Weekdays.sortIndex(it.dayOfWeek) },
@@ -224,11 +255,7 @@ class MicRepository(
 
     /** Scrape history, newest first. Throws [ApiException]. */
     suspend fun loadScrapeLog() {
-        _scrapeLog.value = api.selectList(
-            Tables.SCRAPE_LOG,
-            ScrapeLogEntry.serializer(),
-            listOf("order" to "last_scraped.desc.nullslast,id.desc"),
-        )
+        _scrapeLog.value = backend.fetchScrapeLog()
     }
 
     // ------------------------------------------------------------------
@@ -240,7 +267,7 @@ class MicRepository(
      * (planned) set for that mic and date, so sets are reloaded too.
      */
     suspend fun setPlanStatus(micId: Int, date: LocalDate, status: PlanStatus) {
-        api.rpc(Rpc.SET_PLAN_STATUS, Rpc.setPlanStatusArgs(micId, date, status))
+        backend.setPlanStatus(micId, date, status)
         // Show the change immediately, then confirm with the server.
         _plans.update { list ->
             list.filterNot { it.openMicId == micId && it.planDate == date } +
@@ -254,7 +281,7 @@ class MicRepository(
 
     /** RPC clear_plan. The skeletal set (if any) is left alone, like the web app. */
     suspend fun clearPlan(micId: Int, date: LocalDate) {
-        api.rpc(Rpc.CLEAR_PLAN, Rpc.clearPlanArgs(micId, date))
+        backend.clearPlan(micId, date)
         _plans.update { list -> list.filterNot { it.openMicId == micId && it.planDate == date } }
         refreshQuietly { loadPlans(date, date) }
     }
@@ -265,7 +292,7 @@ class MicRepository(
 
     /** POST open_mics (null keys omitted, is_active true). Returns the new mic. */
     suspend fun addMic(draft: MicDraft): Mic {
-        val created = CoreJson.decodeFirst(api.insert(Tables.OPEN_MICS, draft.toInsertPayload()), Mic.serializer())
+        val created = backend.insertMic(draft.toInsertPayload())
             ?: throw ApiException("The mic wasn't saved. Check that this account is an app admin.")
         replaceMicLocally(created)
         refreshQuietly { refreshMics() }
@@ -295,7 +322,7 @@ class MicRepository(
 
     /** RPC delete_mic: soft delete (is_active = false) and remove its plans. */
     suspend fun deleteMic(micId: Int) {
-        api.rpc(Rpc.DELETE_MIC, Rpc.deleteMicArgs(micId))
+        backend.deleteMic(micId)
         _mics.update { list -> list.map { if (it.id == micId) it.copy(isActive = false) else it } }
         _plans.update { list -> list.filterNot { it.openMicId == micId } }
         refreshQuietly { refreshMics() }
@@ -307,7 +334,7 @@ class MicRepository(
 
     /** POST my_sets (null keys omitted). Returns the new row. */
     suspend fun logSet(draft: SetDraft): SetEntry {
-        val created = CoreJson.decodeFirst(api.insert(Tables.MY_SETS, draft.toInsertPayload()), SetEntry.serializer())
+        val created = backend.insertSet(draft.toInsertPayload())
             ?: throw ApiException("The set wasn't saved. Check that this account is an app admin.")
         // filterNot first: a refresh running at the same time may already have
         // fetched this row, and a duplicate id would crash the keyed History list.
@@ -318,10 +345,8 @@ class MicRepository(
 
     /** PATCH my_sets?id=eq.X with every field (explicit nulls). Used for planned rows and edits. */
     suspend fun updateSet(setId: Int, draft: SetDraft): SetEntry {
-        val updated = CoreJson.decodeFirst(
-            api.update(Tables.MY_SETS, listOf("id" to "eq.$setId"), draft.toUpdatePayload()),
-            SetEntry.serializer(),
-        ) ?: throw ApiException("That set no longer exists (or this account can't edit it).")
+        val updated = backend.updateSet(setId, draft.toUpdatePayload())
+            ?: throw ApiException("That set no longer exists (or this account can't edit it).")
         _sets.update { list -> sortSets(list.map { if (it.id == setId) updated else it }) }
         refreshQuietly { refreshSets() }
         return updated
@@ -329,7 +354,7 @@ class MicRepository(
 
     /** DELETE my_sets?id=eq.X (Set Detail → Delete). */
     suspend fun deleteSet(setId: Int) {
-        api.delete(Tables.MY_SETS, listOf("id" to "eq.$setId"))
+        backend.deleteSet(setId)
         _sets.update { list -> list.filterNot { it.id == setId } }
         refreshQuietly { refreshSets() }
     }
@@ -340,7 +365,7 @@ class MicRepository(
      */
     suspend fun deletePlannedSet(setId: Int): Boolean {
         val planned = _sets.value.firstOrNull { it.id == setId }
-        val deleted = JsonValues.boolean(api.rpc(Rpc.DELETE_PLANNED_SET, Rpc.deletePlannedSetArgs(setId))) == true
+        val deleted = backend.deletePlannedSet(setId)
         if (deleted) {
             _sets.update { list -> list.filterNot { it.id == setId } }
             val micId = planned?.openMicId
@@ -363,18 +388,18 @@ class MicRepository(
 
     /** RPC import_scraped_mic. Returns the new open_mics id (null if the server returned none). */
     suspend fun importScraped(scrapedId: Long): Int? {
-        val result = api.rpc(Rpc.IMPORT_SCRAPED_MIC, Rpc.importScrapedMicArgs(scrapedId))
+        val newMicId = backend.importScrapedMic(scrapedId)
         _scraped.update { list -> list.filterNot { it.id == scrapedId } }
         refreshQuietly {
             refreshMics()
             loadScraped()
         }
-        return JsonValues.int(result)
+        return newMicId
     }
 
     /** RPC dismiss_scraped_mic. */
     suspend fun dismissScraped(scrapedId: Long) {
-        api.rpc(Rpc.DISMISS_SCRAPED_MIC, Rpc.dismissScrapedMicArgs(scrapedId))
+        backend.dismissScrapedMic(scrapedId)
         _scraped.update { list -> list.filterNot { it.id == scrapedId } }
         refreshQuietly { loadScraped() }
     }
@@ -389,26 +414,11 @@ class MicRepository(
         return monday.minusWeeks(1)..monday.plusWeeks(4).minusDays(1)
     }
 
-    private suspend fun fetchMics(): List<Mic> =
-        api.selectList(Tables.OPEN_MICS, Mic.serializer()).sortedWith(MicRules.byDayThenTime)
+    private suspend fun fetchMics(): List<Mic> = backend.fetchMics().sortedWith(MicRules.byDayThenTime)
 
-    private suspend fun fetchSets(): List<SetEntry> =
-        api.selectList(
-            Tables.MY_SETS,
-            SetEntry.serializer(),
-            listOf("order" to "date_performed.desc,id.desc"),
-        )
+    private suspend fun fetchSets(): List<SetEntry> = backend.fetchSets()
 
-    private suspend fun fetchPlans(from: LocalDate, to: LocalDate): List<MicPlan> =
-        api.selectList(
-            Tables.MIC_PLANS,
-            MicPlan.serializer(),
-            listOf(
-                "plan_date" to "gte.$from",
-                "plan_date" to "lte.$to",
-                "order" to "plan_date.asc,id.asc",
-            ),
-        )
+    private suspend fun fetchPlans(from: LocalDate, to: LocalDate): List<MicPlan> = backend.fetchPlans(from, to)
 
     /** Replace every plan dated inside [from]..[to] with [fetched]. */
     private fun mergePlans(from: LocalDate, to: LocalDate, fetched: List<MicPlan>) {
@@ -418,10 +428,8 @@ class MicRepository(
     }
 
     private suspend fun patchMic(micId: Int, body: JsonObject): Mic {
-        val updated = CoreJson.decodeFirst(
-            api.update(Tables.OPEN_MICS, listOf("id" to "eq.$micId"), body),
-            Mic.serializer(),
-        ) ?: throw ApiException("That mic no longer exists (or this account can't edit it).")
+        val updated = backend.updateMic(micId, body)
+            ?: throw ApiException("That mic no longer exists (or this account can't edit it).")
         replaceMicLocally(updated)
         return updated
     }

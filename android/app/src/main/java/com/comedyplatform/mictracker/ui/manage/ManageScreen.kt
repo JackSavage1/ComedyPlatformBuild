@@ -41,7 +41,7 @@ import com.comedyplatform.mictracker.appViewModel
 import com.comedyplatform.mictracker.ui.components.ErrorBanner
 import com.comedyplatform.mictracker.ui.components.RefreshableBox
 import com.comedyplatform.mictracker.ui.components.SmallSpinner
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -52,26 +52,37 @@ import java.time.LocalDate
  * The first page is a menu; Import, Scrape History, Manage Mics and
  * Geocoding open as sub-pages inside this screen (the system back button and
  * the top-bar arrow return to the menu). Add a Mic goes to the Mic Form, and
- * Account (email + Sign out) sits at the bottom of the menu.
+ * Account (email + Sign out, or Demo mode + Exit demo) sits at the bottom of
+ * the menu.
+ *
+ * @param initialSection open this sub-page first (CI's `import` screenshot, spec 8.3)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ManageScreen(onOpenMic: (micId: Int, date: LocalDate?) -> Unit, onAddMic: () -> Unit, onBack: () -> Unit) {
+fun ManageScreen(
+    onOpenMic: (micId: Int, date: LocalDate?) -> Unit,
+    onAddMic: () -> Unit,
+    onBack: () -> Unit,
+    initialSection: ManageSection? = null,
+) {
     val viewModel = appViewModel { container ->
         ManageViewModel(
             repository = container.micRepository,
             geocoder = container.geocodingService,
-            email = container.authRepository.session.map { session -> session?.email },
+            account = combine(container.authRepository.session, container.isDemo) { session, demo ->
+                ManageAccount(email = session?.email, isDemo = demo)
+            },
             // Sign-out runs in the app-wide scope: this screen is removed the
             // moment the session is cleared, which would cancel viewModelScope.
             performSignOut = { container.applicationScope.launch { container.signOut() } },
+            performExitDemo = { container.exitDemo() },
         )
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Which sub-page is open (null = the menu). Saved by name across rotation.
-    var sectionName by rememberSaveable { mutableStateOf<String?>(null) }
+    var sectionName by rememberSaveable { mutableStateOf(initialSection?.name) }
     val section = sectionName?.let { name -> ManageSection.entries.firstOrNull { it.name == name } }
     val closeSection = { sectionName = null }
 
@@ -116,6 +127,7 @@ fun ManageScreen(onOpenMic: (micId: Int, date: LocalDate?) -> Unit, onAddMic: ()
                         onAddMic = onAddMic,
                         onOpenSection = { sectionName = it.name },
                         onSignOut = viewModel::signOut,
+                        onExitDemo = viewModel::exitDemo,
                     )
 
                     ManageSection.IMPORT -> ImportSection(
@@ -152,6 +164,7 @@ private fun ManageMenu(
     onAddMic: () -> Unit,
     onOpenSection: (ManageSection) -> Unit,
     onSignOut: () -> Unit,
+    onExitDemo: () -> Unit,
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         item(key = "add") {
@@ -189,7 +202,11 @@ private fun ManageMenu(
             MenuRow(title = ManageSection.GEOCODING.title, subtitle = subtitle, onClick = { onOpenSection(ManageSection.GEOCODING) })
         }
         item(key = "account") {
-            AccountSection(email = state.email, isSigningOut = state.isSigningOut, onSignOut = onSignOut)
+            if (state.isDemo) {
+                DemoAccountSection(onExitDemo = onExitDemo)
+            } else {
+                AccountSection(email = state.email, isSigningOut = state.isSigningOut, onSignOut = onSignOut)
+            }
         }
     }
 }
@@ -228,6 +245,29 @@ private fun AccountSection(email: String?, isSigningOut: Boolean, onSignOut: () 
             }
             Spacer(Modifier.width(8.dp))
             Text(if (isSigningOut) "Signing out…" else "Sign out")
+        }
+    }
+}
+
+/** Account in demo mode (spec 8.1): "Demo mode" and Exit demo instead of Sign out. */
+@Composable
+private fun DemoAccountSection(onExitDemo: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(text = "👤 Account", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(
+            text = "Demo mode — sample data, nothing is saved.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = onExitDemo) {
+            Icon(imageVector = Icons.AutoMirrored.Filled.Logout, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Exit demo")
         }
     }
 }

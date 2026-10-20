@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -56,10 +57,13 @@ import kotlin.math.roundToLong
  *   4  Sets by Day of Week        5  Sets by Neighborhood     6  Top 5 Mics
  *   7  Tag Frequency              8  Tags Over Time (stacked bars by month)
  *   9  My Mic Ratings table      10  "rated highly but not visited lately" insight
+ *
+ * @param scrollToCharts start scrolled so "Set Rating Over Time" is at the top
+ *   (CI's `stats-charts` screenshot, spec 8.3)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StatsScreen() {
+fun StatsScreen(scrollToCharts: Boolean = false) {
     val viewModel = appViewModel { container ->
         StatsViewModel(repository = container.micRepository, today = { container.today() })
     }
@@ -96,7 +100,7 @@ fun StatsScreen() {
 
                     data == null || data.isEmpty -> ScrollableMessage { StatsEmptyState() }
 
-                    else -> StatsContent(data)
+                    else -> StatsContent(data, scrollToCharts)
                 }
             }
         }
@@ -151,7 +155,7 @@ private fun StatsEmptyState() {
 }
 
 @Composable
-private fun StatsContent(data: StatsCalculations.StatsData) {
+private fun StatsContent(data: StatsCalculations.StatsData, scrollToCharts: Boolean) {
     // One color per venue, shared by both scatter charts (most-visited venue first).
     val venueColors: Map<String, Color> = remember(data.venues) {
         data.venues.mapIndexed { index, venue -> venue to paletteColor(index) }.toMap()
@@ -161,7 +165,11 @@ private fun StatsContent(data: StatsCalculations.StatsData) {
     }
     val trendColor = MaterialTheme.colorScheme.onSurface
 
+    // Item 0 is the metrics grid, item 1 "Set Rating Over Time" (the first chart).
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = if (scrollToCharts) 1 else 0)
+
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {

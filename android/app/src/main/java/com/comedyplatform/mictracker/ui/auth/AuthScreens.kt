@@ -76,13 +76,14 @@ private fun AppTitle() {
     )
 }
 
-/** Spec 6.1: app name + 🎤, email, password, Sign in, error text. */
+/** Spec 6.1: app name + 🎤, email, password, Sign in, error text — plus "Try the demo" (spec 8.1). */
 @Composable
 fun SignInScreen(
     busy: Boolean,
     error: String?,
     onSignIn: (email: String, password: String) -> Unit,
     onInputChanged: () -> Unit,
+    onTryDemo: () -> Unit,
 ) {
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
@@ -148,6 +149,7 @@ fun SignInScreen(
                 Text("Sign in")
             }
         }
+        TryDemoButton(enabled = !busy, onClick = onTryDemo)
         Text(
             text = "No sign-up here — create your account in the Supabase dashboard (see docs/MOBILE_SETUP.md).",
             style = MaterialTheme.typography.bodySmall,
@@ -157,9 +159,9 @@ fun SignInScreen(
     }
 }
 
-/** Shown when the build has no Supabase URL / key (spec section 2). */
+/** Shown when the build has no Supabase URL / key (spec section 2), with "Try the demo" (spec 8.1). */
 @Composable
-fun NotConfiguredScreen() {
+fun NotConfiguredScreen(onTryDemo: () -> Unit) {
     GateColumn {
         AppTitle()
         Text(
@@ -179,6 +181,24 @@ fun NotConfiguredScreen() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        TryDemoButton(enabled = true, onClick = onTryDemo)
+    }
+}
+
+/**
+ * Spec 8.1: a secondary-style button that opens the app on sample data,
+ * no account needed. Nothing is saved; Manage → Account → Exit demo leaves.
+ */
+@Composable
+private fun TryDemoButton(enabled: Boolean, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 480.dp),
+    ) {
+        Text("Try the demo")
     }
 }
 

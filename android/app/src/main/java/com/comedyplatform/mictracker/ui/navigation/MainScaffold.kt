@@ -9,7 +9,10 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -20,28 +23,44 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.comedyplatform.mictracker.AppContainer
+import com.comedyplatform.mictracker.LaunchHooks
+import com.comedyplatform.mictracker.LaunchScreen
+import com.comedyplatform.mictracker.appContainer
 import com.comedyplatform.mictracker.core.json.JsonValues
 import com.comedyplatform.mictracker.ui.calendar.CalendarScreen
 import com.comedyplatform.mictracker.ui.detail.MicDetailScreen
 import com.comedyplatform.mictracker.ui.manage.ManageScreen
+import com.comedyplatform.mictracker.ui.manage.ManageSection
 import com.comedyplatform.mictracker.ui.map.MapScreen
 import com.comedyplatform.mictracker.ui.micform.MicFormScreen
 import com.comedyplatform.mictracker.ui.sets.SetsScreen
 import com.comedyplatform.mictracker.ui.stats.StatsScreen
 import com.comedyplatform.mictracker.ui.tonight.TonightScreen
+import kotlinx.coroutines.flow.first
 import java.time.LocalDate
 
 /**
- * The signed-in app: a bottom NavigationBar with the 5 tabs, and a NavHost
- * with the tabs plus Mic Detail, Mic Form and Manage (which hide the bar).
+ * The app behind the gate (signed in, or demo mode): a bottom NavigationBar
+ * with the 5 tabs, and a NavHost with the tabs plus Mic Detail, Mic Form and
+ * Manage (which hide the bar).
  *
  * Insets: this Scaffold pads its content for the bottom bar / system bars and
  * *consumes* those insets, so screens may use their own Scaffold + TopAppBar
  * without getting the status-bar padding twice.
+ *
+ * CI screenshots (spec 8.3): when the launch asked for a screen, the NavHost
+ * starts on that screen's tab, opens a screen on top once the data has
+ * loaded (Mic Detail, Manage, Mic Form), and hands screens their initial
+ * state (see [LaunchHooks]). A normal launch starts on Tonight.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainScaffold() {
+    val container = appContainer()
+    val hooks = container.launchHooks
+    // Saved so a rotation keeps the same start tab (the hook is only handed out once).
+    val startRoute = rememberSaveable { startRouteFor(hooks.takeForStartTab()) }
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
@@ -66,10 +85,48 @@ fun MainScaffold() {
     ) { innerPadding ->
         MicTrackerNavHost(
             navController = navController,
+            startRoute = startRoute,
+            hooks = hooks,
             modifier = Modifier
                 .padding(innerPadding)
                 .consumeWindowInsets(innerPadding),
         )
+    }
+
+    // After the NavHost exists: open the launch's screen on top, if any.
+    LaunchedEffect(navController) {
+        openLaunchScreen(hooks.takeForNavigation(), navController, container)
+    }
+}
+
+/** The tab a launch's screen lives on (spec 8.3); Tonight for everything else and normal launches. */
+private fun startRouteFor(screen: LaunchScreen?): String = when (screen) {
+    LaunchScreen.CALENDAR, LaunchScreen.CALENDAR_FILTERS -> Routes.CALENDAR
+    LaunchScreen.MAP -> Routes.MAP
+    LaunchScreen.SETS_LOG, LaunchScreen.SETS_HISTORY, LaunchScreen.SET_DETAIL -> Routes.SETS
+    LaunchScreen.STATS, LaunchScreen.STATS_CHARTS -> Routes.STATS
+    null, LaunchScreen.SIGN_IN, LaunchScreen.TONIGHT, LaunchScreen.MIC_DETAIL,
+    LaunchScreen.MANAGE, LaunchScreen.IMPORT, LaunchScreen.MIC_FORM,
+    -> Routes.TONIGHT
+}
+
+/** The mic `screen=mic-detail` opens (spec 8.3). */
+private const val LAUNCH_MIC_ID = 4
+
+/** Opens the screens that sit on top of a tab (spec 8.3). Does nothing for the others. */
+private suspend fun openLaunchScreen(screen: LaunchScreen?, navController: NavHostController, container: AppContainer) {
+    when (screen) {
+        LaunchScreen.MIC_DETAIL -> {
+            // "Date = its next occurrence" needs the mic's weekday, so wait for the first load.
+            val repository = container.micRepository
+            repository.hasLoaded.first { it }
+            val date = repository.mic(LAUNCH_MIC_ID)?.nextOccurrence(container.today())
+            navController.navigate(Routes.micDetail(LAUNCH_MIC_ID, date))
+        }
+        // Import is a page inside Manage; ManageScreen opens it (initialSection).
+        LaunchScreen.MANAGE, LaunchScreen.IMPORT -> navController.navigate(Routes.MANAGE)
+        LaunchScreen.MIC_FORM -> navController.navigate(Routes.micForm(null))
+        else -> Unit
     }
 }
 
@@ -88,37 +145,49 @@ private fun NavHostController.popIfPossible() {
 }
 
 @Composable
-private fun MicTrackerNavHost(navController: NavHostController, modifier: Modifier = Modifier) {
+private fun MicTrackerNavHost(
+    navController: NavHostController,
+    startRoute: String,
+    hooks: LaunchHooks,
+    modifier: Modifier = Modifier,
+) {
     val openMic: (Int, LocalDate?) -> Unit = { micId, date ->
         navController.navigate(Routes.micDetail(micId, date))
     }
     val openManage: () -> Unit = { navController.navigate(Routes.MANAGE) { launchSingleTop = true } }
 
+    // Each `remember { hooks.takeScreenState(...) }` below answers true only for
+    // the screen a CI launch asked for, and only the first time (spec 8.3).
     NavHost(
         navController = navController,
-        startDestination = Routes.TONIGHT,
+        startDestination = startRoute,
         modifier = modifier,
     ) {
         composable(Routes.TONIGHT) {
             TonightScreen(onOpenMic = openMic, onOpenManage = openManage)
         }
         composable(Routes.CALENDAR) {
-            CalendarScreen(onOpenMic = openMic, onOpenManage = openManage)
+            val openFilters = remember { hooks.takeScreenState(LaunchScreen.CALENDAR_FILTERS) != null }
+            CalendarScreen(onOpenMic = openMic, onOpenManage = openManage, initialFiltersOpen = openFilters)
         }
         composable(Routes.MAP) {
             MapScreen(onOpenMic = openMic)
         }
         composable(Routes.SETS) {
-            SetsScreen()
+            val launch = remember { hooks.takeScreenState(LaunchScreen.SETS_HISTORY, LaunchScreen.SET_DETAIL) }
+            SetsScreen(startOnHistory = launch != null, openLatestSet = launch == LaunchScreen.SET_DETAIL)
         }
         composable(Routes.STATS) {
-            StatsScreen()
+            val scrollToCharts = remember { hooks.takeScreenState(LaunchScreen.STATS_CHARTS) != null }
+            StatsScreen(scrollToCharts = scrollToCharts)
         }
         composable(Routes.MANAGE) {
+            val openImport = remember { hooks.takeScreenState(LaunchScreen.IMPORT) != null }
             ManageScreen(
                 onOpenMic = openMic,
                 onAddMic = { navController.navigate(Routes.micForm(null)) },
                 onBack = { navController.popIfPossible() },
+                initialSection = if (openImport) ManageSection.IMPORT else null,
             )
         }
         composable(
