@@ -247,3 +247,90 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SupabaseURL' "$PLIST")" = "https://example.supabase.co"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = "com.comedyplatform.mictracker.ci"
+
+  # An unsigned iPhone app (.ipa) for installing from a Windows PC with
+  # Sideloadly, which signs it with the owner's free Apple ID. Built with
+  # the real Supabase settings from the SUPABASE_URL / SUPABASE_ANON_KEY
+  # repository secrets (the app shows "Not configured" without them).
+  iphone-ipa:
+    name: iPhone app for sideloading (.ipa)
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    defaults:
+      run:
+        working-directory: ios
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Select the newest Xcode
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -v -i beta | sort -V | tail -n 1 || true)
+          if [ -n "$XCODE_APP" ]; then sudo xcode-select -s "$XCODE_APP/Contents/Developer"; fi
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Same file ios/setup.sh writes on a Mac. Quotes and spaces pasted
+      # into the secrets are dropped; `//` becomes `/$()/` because xcconfig
+      # treats // as a comment.
+      - name: Write Secrets.xcconfig from repository secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          url=$(printf '%s' "$SUPABASE_URL" | tr -d "\"' \t\r\n")
+          key=$(printf '%s' "$SUPABASE_ANON_KEY" | tr -d "\"' \t\r\n")
+          url=${url%/}
+          if [ -z "$url" ] || [ -z "$key" ]; then
+            echo "::warning::SUPABASE_URL / SUPABASE_ANON_KEY secrets are missing; the app will open on 'Not configured' (demo still works)."
+          fi
+          {
+            echo "SUPABASE_URL = $(printf '%s' "$url" | sed 's#//#/$()/#')"
+            echo "SUPABASE_ANON_KEY = $key"
+          } > Config/Secrets.xcconfig
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build for iPhone (Release, unsigned)
+        run: |
+          xcodebuild build \
+            -quiet \
+            -project MicTracker.xcodeproj \
+            -scheme MicTracker \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Check the Supabase URL reached the app
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          APP=build/DerivedData/Build/Products/Release-iphoneos/MicTracker.app
+          got=$(/usr/libexec/PlistBuddy -c 'Print :SupabaseURL' "$APP/Info.plist")
+          case "$got" in
+            https://*.supabase.co) echo "Supabase URL is set." ;;
+            "") echo "::warning::No Supabase URL in this build (secrets missing)." ;;
+            *) echo "::error::Supabase URL looks wrong in the build"; exit 1 ;;
+          esac
+
+      - name: Package MicTracker.ipa
+        run: |
+          rm -rf build/ipa && mkdir -p build/ipa/Payload
+          cp -R build/DerivedData/Build/Products/Release-iphoneos/MicTracker.app build/ipa/Payload/
+          (cd build/ipa && zip -qry ../MicTracker.ipa Payload)
+          ls -lh build/MicTracker.ipa
+
+      - name: Upload MicTracker.ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: MicTracker-iphone-ipa
+          path: ios/build/MicTracker.ipa
+          if-no-files-found: error
