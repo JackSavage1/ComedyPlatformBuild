@@ -389,3 +389,45 @@ the Tonight tab. `screen` opens directly to:
 | `mic-form` | Mic Form in add mode |
 
 Screenshots are taken in **dark mode** with a clean status bar.
+
+---
+
+## 9. Change password (Manage → Account)
+
+For a signed-in (non-demo) user, the Account section gets a **Change password**
+row under the email, above Sign out. In demo mode the row is hidden.
+
+**Screen** (sheet on iOS, screen or dialog on Android), title "Change password":
+- **Current password**, **New password**, **Confirm new password**: secure
+  fields with a show/hide toggle; no autocorrect or autocapitalize. iOS:
+  `.textContentType(.password)` for current, `.newPassword` for the new ones,
+  so iCloud Keychain offers to save the new password. Android: the matching
+  password autofill hints.
+- Footnote: "At least 8 characters. This only changes your Mic Tracker
+  password, not your Supabase account."
+- **Save** is enabled only when every field is filled in. Cancel closes the
+  screen.
+
+**Validation, before any network call, in this order:**
+1. New password shorter than 8 characters → "Use at least 8 characters."
+2. New and confirm differ → "The new passwords don't match."
+3. New equals current → "Pick a password different from your current one."
+
+**On Save** (show progress, block double taps):
+1. Re-check the current password by signing in again:
+   `POST /auth/v1/token?grant_type=password` with the signed-in email and
+   the current password. On HTTP 400 → "Your current password is incorrect."
+   On success, store the returned tokens (a fresh session), as after a
+   normal sign-in. This also satisfies Supabase's optional "recent login
+   required" rule.
+2. `PUT /auth/v1/user` with `Authorization: Bearer <access_token>` and body
+   `{"password": "<new>"}`.
+   - HTTP 422 with error code `weak_password` or `same_password` → show the
+     server's message.
+   - Any other failure → show the server's message, or "Couldn't change
+     your password. Check your connection and try again."
+3. Success → close the screen, then show "Password changed." (toast or
+   snackbar on Android, alert or banner on iOS). The user stays signed in.
+
+Never log or persist any of the three passwords, and clear the fields when
+the screen closes.
