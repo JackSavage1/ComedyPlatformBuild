@@ -9,7 +9,8 @@ import SwiftUI
 //   🕘 Scrape History            → scrape_log, newest first
 //   🎤 Manage Mics              → searchable list → Mic Detail (no date)
 //   📍 Geocoding                → coordinates X / Y, "Geocode with device"
-//   👤 Account                  → signed-in email, Sign out
+//   👤 Account                  → signed-in email, Change password (spec 9,
+//                                 a sheet), Sign out
 //                                 (demo mode: "Demo mode", Exit demo)
 //
 // Contract (see Shared/ManageToolbarButton.swift): this view is shown in a
@@ -22,6 +23,11 @@ struct ManageView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var isConfirmingSignOut = false
+    @State private var isChangingPassword = false
+    /// Set by ChangePasswordView on success; the alert waits until the
+    /// sheet has fully closed (two presentations at once don't mix).
+    @State private var passwordWasChanged = false
+    @State private var isShowingPasswordChanged = false
 
     var body: some View {
         List {
@@ -50,6 +56,15 @@ struct ManageView: View {
                 signOut()
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $isChangingPassword, onDismiss: showPasswordChangedIfNeeded) {
+            ChangePasswordView {
+                passwordWasChanged = true
+            }
+            .environment(store)
+        }
+        .alert(PasswordRules.successMessage, isPresented: $isShowingPasswordChanged) {
+            Button("OK", role: .cancel) {}
         }
     }
 
@@ -123,6 +138,11 @@ struct ManageView: View {
                 }
             } else {
                 LabeledContent("Signed in as", value: signedInEmail)
+                Button {
+                    isChangingPassword = true
+                } label: {
+                    Label("Change password", systemImage: "key")
+                }
                 Button(role: .destructive) {
                     isConfirmingSignOut = true
                 } label: {
@@ -148,6 +168,14 @@ struct ManageView: View {
             return email
         }
         return "Unknown"
+    }
+
+    /// After the Change password sheet closes: "Password changed." if it
+    /// worked (not after Cancel).
+    private func showPasswordChangedIfNeeded() {
+        guard passwordWasChanged else { return }
+        passwordWasChanged = false
+        isShowingPasswordChanged = true
     }
 
     /// Closes the sheet, then leaves the demo (RootView shows the gate again).

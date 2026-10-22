@@ -13,6 +13,10 @@ import Observation
 //   * After sign-in, RPC `is_app_admin` decides between the main app and the
 //     "Account not authorized" screen.
 //
+// Spec 9 (Change password):
+//   * Re-check the current password: POST /auth/v1/token?grant_type=password
+//   * Set the new one:               PUT  /auth/v1/user  {password}
+//
 // The session is saved in the Keychain so you stay signed in between launches.
 // =============================================================================
 
@@ -151,6 +155,93 @@ final class AuthService {
         signOutLocally()
     }
 
+    // MARK: - Change password (spec 9)
+
+    /// Changes the signed-in user's password in two steps:
+    ///
+    ///   1. Sign in again with the current password. This proves the user
+    ///      knows it (and satisfies Supabase's optional "recent login
+    ///      required" rule). The fresh session is saved like any sign-in.
+    ///   2. PUT /auth/v1/user with the new password, using that fresh token.
+    ///
+    /// On failure it throws an `APIError` whose description is the message
+    /// to show in the form (`APIError.describe(error)`). It never signs the
+    /// user out — not even for a wrong current password.
+    ///
+    /// The passwords are only ever put in request bodies: never logged,
+    /// never stored.
+    func changePassword(current: String, new: String) async throws {
+        guard let email = TextRules.trimmedOrNil(session?.email) else {
+            throw APIError.http(status: 401, message: "Please sign in again.", code: nil)
+        }
+
+        // Step 1: re-check the current password by signing in again.
+        let tokenData: Data
+        let tokenStatus: Int
+        do {
+            (tokenData, tokenStatus) = try await sendTokenRequest(
+                grantType: "password",
+                body: ["email": email, "password": current]
+            )
+        } catch {
+            throw Self.changePasswordFailure(error)
+        }
+        if tokenStatus == 400 {
+            // GoTrue's "Invalid login credentials". The old session is
+            // untouched, so the user stays signed in.
+            throw APIError.http(
+                status: tokenStatus,
+                message: PasswordRules.incorrectCurrentMessage,
+                code: APIError.serverMessage(from: tokenData).code
+            )
+        }
+        guard (200..<300).contains(tokenStatus) else {
+            throw Self.changePasswordFailure(status: tokenStatus, data: tokenData)
+        }
+        guard let fresh = try? decodeTokenResponse(tokenData) else {
+            throw APIError.decoding(PasswordRules.genericFailureMessage)
+        }
+        // Store the fresh session exactly as a normal sign-in does.
+        save(makeSession(from: fresh, fallbackEmail: email))
+
+        // Step 2: set the new password, authorized by the fresh token.
+        guard let url = endpoint("auth/v1/user") else { throw APIError.notConfigured }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 30
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(fresh.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONEncoder().encode(["password": new])
+
+        let data: Data
+        let status: Int
+        do {
+            (data, status) = try await send(request)
+        } catch {
+            throw Self.changePasswordFailure(error)
+        }
+        guard (200..<300).contains(status) else {
+            // e.g. 422 with error_code weak_password / same_password.
+            throw Self.changePasswordFailure(status: status, data: data)
+        }
+    }
+
+    /// A refusal from the server: show its own message (422 weak_password /
+    /// same_password say what to fix), or the generic one if it sent none.
+    private static func changePasswordFailure(status: Int, data: Data) -> APIError {
+        let parsed = APIError.serverMessage(from: data)
+        return .http(status: status, message: parsed.message ?? PasswordRules.genericFailureMessage, code: parsed.code)
+    }
+
+    /// No answer at all (offline, timeout…): the generic message. A
+    /// cancelled task stays a cancellation so the form can ignore it.
+    private static func changePasswordFailure(_ error: Error) -> Error {
+        if APIError.isCancellation(error) { return CancellationError() }
+        return APIError.network(PasswordRules.genericFailureMessage)
+    }
+
     // MARK: - Access check (is_app_admin)
 
     /// Asks the server whether this login is an app admin and moves to
@@ -283,6 +374,17 @@ final class AuthService {
     }
 
     private func tokenRequest(grantType: String, body: [String: String]) async throws -> TokenResponse {
+        let (data, status) = try await sendTokenRequest(grantType: grantType, body: body)
+        guard (200..<300).contains(status) else {
+            throw APIError.fromResponse(status: status, data: data)
+        }
+        return try decodeTokenResponse(data)
+    }
+
+    /// POST /auth/v1/token and return (body, HTTP status) without judging
+    /// the status — `tokenRequest` and `changePassword` each decide what a
+    /// failure means.
+    private func sendTokenRequest(grantType: String, body: [String: String]) async throws -> (Data, Int) {
         guard let url = endpoint("auth/v1/token", query: [URLQueryItem(name: "grant_type", value: grantType)]) else {
             throw APIError.notConfigured
         }
@@ -295,11 +397,10 @@ final class AuthService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONEncoder().encode(body)
+        return try await send(request)
+    }
 
-        let (data, status) = try await send(request)
-        guard (200..<300).contains(status) else {
-            throw APIError.fromResponse(status: status, data: data)
-        }
+    private func decodeTokenResponse(_ data: Data) throws -> TokenResponse {
         do {
             return try JSONDecoder().decode(TokenResponse.self, from: data)
         } catch {

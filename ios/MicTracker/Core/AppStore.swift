@@ -136,6 +136,20 @@ final class AppStore {
         await auth.checkAccess()
     }
 
+    /// Manage → Account → Change password (spec 9).
+    ///
+    /// Unlike the data writes below, this does NOT use the error banner:
+    /// it throws, and the Change password form shows
+    /// `APIError.describe(error)` under its fields. The user stays signed in
+    /// whatever happens.
+    func changePassword(current: String, new: String) async throws {
+        guard !isDemoMode else {
+            // The row is hidden in the demo; this is just a safety net.
+            throw APIError.unexpected("The demo has no password to change.")
+        }
+        try await auth.changePassword(current: current, new: new)
+    }
+
     // MARK: - Demo mode (spec 8.1)
 
     /// "Try the demo": switch to the bundled sample data. Nothing is saved —
