@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.comedyplatform.mictracker.core.model.Mic
 import com.comedyplatform.mictracker.core.model.ScrapeLogEntry
 import com.comedyplatform.mictracker.core.model.ScrapedMic
+import com.comedyplatform.mictracker.core.rules.PasswordRules
 import com.comedyplatform.mictracker.data.ApiException
 import com.comedyplatform.mictracker.data.GeocodingService
 import com.comedyplatform.mictracker.data.MicRepository
@@ -50,6 +51,19 @@ data class AddAllProgress(val sourceKey: String, val done: Int, val total: Int)
 /** Who's using the app, for the Account section: the signed-in email, or demo mode (spec 8.1). */
 data class ManageAccount(val email: String?, val isDemo: Boolean)
 
+/**
+ * The Change password dialog (spec 9). The three passwords themselves are NOT
+ * here: they live only in the dialog's own state, so they're gone as soon as
+ * it closes and never end up in a ViewModel or saved state.
+ */
+data class ChangePasswordState(
+    val isOpen: Boolean = false,
+    /** True while the two server calls run (shows progress, blocks double taps). */
+    val isSaving: Boolean = false,
+    /** Inline error under the fields (a validation rule or the server's message). */
+    val error: String? = null,
+)
+
 /** A one-off snackbar message; [id] makes repeated identical messages show again. */
 data class ManageMessage(val text: String, val id: Long = System.nanoTime())
 
@@ -83,6 +97,7 @@ data class ManageUiState(
     val geocode: GeocodeProgress = GeocodeProgress(),
     // ---- Account / general --------------------------------------------------------------
     val isSigningOut: Boolean = false,
+    val changePassword: ChangePasswordState = ChangePasswordState(),
     val isRefreshing: Boolean = false,
     val error: String? = null,
     val message: ManageMessage? = null,
@@ -103,6 +118,8 @@ data class ManageUiState(
  * @param performSignOut signs out; runs in the app-wide scope so it finishes even
  *   though this screen disappears as soon as the session is cleared
  * @param performExitDemo leaves demo mode (the gate then replaces this screen)
+ * @param performChangePassword re-checks the current password and sets the new
+ *   one (AuthRepository.changePassword); throws [ApiException] with the message to show
  */
 class ManageViewModel(
     private val repository: MicRepository,
@@ -110,6 +127,7 @@ class ManageViewModel(
     account: Flow<ManageAccount>,
     private val performSignOut: () -> Unit,
     private val performExitDemo: () -> Unit,
+    private val performChangePassword: suspend (current: String, new: String) -> Unit,
 ) : ViewModel() {
 
     /** Things only this screen knows about. */
@@ -122,6 +140,7 @@ class ManageViewModel(
         val searchQuery: String = "",
         val geocode: GeocodeProgress = GeocodeProgress(),
         val isSigningOut: Boolean = false,
+        val changePassword: ChangePasswordState = ChangePasswordState(),
         val isRefreshing: Boolean = false,
         val error: String? = null,
         val message: ManageMessage? = null,
@@ -158,6 +177,7 @@ class ManageViewModel(
             geocoderAvailable = geocoder.isAvailable,
             geocode = ui.geocode,
             isSigningOut = ui.isSigningOut,
+            changePassword = ui.changePassword,
             isRefreshing = ui.isRefreshing,
             error = ui.error,
             message = ui.message,
@@ -375,5 +395,49 @@ class ManageViewModel(
     fun exitDemo() {
         geocodeJob?.cancel()
         performExitDemo()
+    }
+
+    // ------------------------------------------------------------------
+    // Change password (spec 9)
+    // ------------------------------------------------------------------
+
+    fun openChangePassword() = local.update { it.copy(changePassword = ChangePasswordState(isOpen = true)) }
+
+    /** Cancel / back. Ignored while saving, so the result can't get lost. */
+    fun closeChangePassword() {
+        if (local.value.changePassword.isSaving) return
+        local.update { it.copy(changePassword = ChangePasswordState()) }
+    }
+
+    /** The user typed again: hide the old error. */
+    fun clearChangePasswordError() = local.update { it.copy(changePassword = it.changePassword.copy(error = null)) }
+
+    /**
+     * Save: the spec 9 checks first (no network), then the server calls.
+     * Success closes the dialog and shows "Password changed."; the user stays
+     * signed in. A failure keeps the dialog open with the message inline.
+     */
+    fun changePassword(current: String, new: String, confirm: String) {
+        val dialog = local.value.changePassword
+        if (!dialog.isOpen || dialog.isSaving) return // blocks double taps
+        if (!PasswordRules.canSave(current, new, confirm)) return
+        PasswordRules.validate(current, new, confirm)?.let { problem ->
+            local.update { it.copy(changePassword = it.changePassword.copy(error = problem)) }
+            return
+        }
+        local.update { it.copy(changePassword = it.changePassword.copy(isSaving = true, error = null)) }
+        viewModelScope.launch {
+            try {
+                performChangePassword(current, new)
+                local.update {
+                    it.copy(
+                        changePassword = ChangePasswordState(),
+                        message = ManageMessage(PasswordRules.SUCCESS_MESSAGE),
+                    )
+                }
+            } catch (e: ApiException) {
+                local.update { it.copy(changePassword = it.changePassword.copy(isSaving = false, error = e.userMessage)) }
+            }
+        }
     }
 }

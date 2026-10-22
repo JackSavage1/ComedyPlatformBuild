@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.comedyplatform.mictracker.appViewModel
+import com.comedyplatform.mictracker.core.rules.PasswordRules
 import com.comedyplatform.mictracker.ui.components.ErrorBanner
 import com.comedyplatform.mictracker.ui.components.RefreshableBox
 import com.comedyplatform.mictracker.ui.components.SmallSpinner
@@ -52,8 +54,8 @@ import java.time.LocalDate
  * The first page is a menu; Import, Scrape History, Manage Mics and
  * Geocoding open as sub-pages inside this screen (the system back button and
  * the top-bar arrow return to the menu). Add a Mic goes to the Mic Form, and
- * Account (email + Sign out, or Demo mode + Exit demo) sits at the bottom of
- * the menu.
+ * Account (email + Change password + Sign out, or Demo mode + Exit demo) sits
+ * at the bottom of the menu.
  *
  * @param initialSection open this sub-page first (CI's `import` screenshot, spec 8.3)
  */
@@ -76,6 +78,7 @@ fun ManageScreen(
             // moment the session is cleared, which would cancel viewModelScope.
             performSignOut = { container.applicationScope.launch { container.signOut() } },
             performExitDemo = { container.exitDemo() },
+            performChangePassword = { current, new -> container.authRepository.changePassword(current, new) },
         )
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -126,6 +129,7 @@ fun ManageScreen(
                         state = state,
                         onAddMic = onAddMic,
                         onOpenSection = { sectionName = it.name },
+                        onChangePassword = viewModel::openChangePassword,
                         onSignOut = viewModel::signOut,
                         onExitDemo = viewModel::exitDemo,
                     )
@@ -155,6 +159,17 @@ fun ManageScreen(
             }
         }
     }
+
+    // Change password (spec 9): only for a signed-in account, never in demo mode.
+    // On success the ViewModel closes it and the snackbar says "Password changed."
+    if (state.changePassword.isOpen && !state.isDemo) {
+        ChangePasswordDialog(
+            state = state.changePassword,
+            onSave = viewModel::changePassword,
+            onInputChanged = viewModel::clearChangePasswordError,
+            onDismiss = viewModel::closeChangePassword,
+        )
+    }
 }
 
 /** The first page: one row per section, then Account. */
@@ -163,6 +178,7 @@ private fun ManageMenu(
     state: ManageUiState,
     onAddMic: () -> Unit,
     onOpenSection: (ManageSection) -> Unit,
+    onChangePassword: () -> Unit,
     onSignOut: () -> Unit,
     onExitDemo: () -> Unit,
 ) {
@@ -205,7 +221,12 @@ private fun ManageMenu(
             if (state.isDemo) {
                 DemoAccountSection(onExitDemo = onExitDemo)
             } else {
-                AccountSection(email = state.email, isSigningOut = state.isSigningOut, onSignOut = onSignOut)
+                AccountSection(
+                    email = state.email,
+                    isSigningOut = state.isSigningOut,
+                    onChangePassword = onChangePassword,
+                    onSignOut = onSignOut,
+                )
             }
         }
     }
@@ -222,22 +243,45 @@ private fun MenuRow(title: String, subtitle: String, onClick: () -> Unit) {
     HorizontalDivider()
 }
 
-/** Account — the signed-in email and Sign out. */
+/**
+ * Account — the signed-in email, a Change password row (spec 9) and Sign out.
+ * (Demo mode shows [DemoAccountSection] instead, so there's no Change password there.)
+ */
 @Composable
-private fun AccountSection(email: String?, isSigningOut: Boolean, onSignOut: () -> Unit) {
+private fun AccountSection(
+    email: String?,
+    isSigningOut: Boolean,
+    onChangePassword: () -> Unit,
+    onSignOut: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(vertical = 16.dp),
     ) {
-        Text(text = "👤 Account", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(
-            text = "Signed in as ${email ?: "unknown email"}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(text = "👤 Account", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = "Signed in as ${email ?: "unknown email"}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        // A full-width row (its own 16 dp side padding lines the icon up with the title).
+        ListItem(
+            headlineContent = { Text(PasswordRules.TITLE) },
+            leadingContent = { Icon(imageVector = Icons.Filled.Lock, contentDescription = null) },
+            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
+            modifier = Modifier.clickable(enabled = !isSigningOut, onClick = onChangePassword),
         )
-        OutlinedButton(onClick = onSignOut, enabled = !isSigningOut) {
+        OutlinedButton(
+            onClick = onSignOut,
+            enabled = !isSigningOut,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        ) {
             if (isSigningOut) {
                 SmallSpinner()
             } else {
